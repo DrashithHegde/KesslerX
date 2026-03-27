@@ -10,8 +10,12 @@
     "lint": "eslint src --ext .js,.jsx"
   },
   "dependencies": {
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "satellite.js": "^7.0.0",
+    "three": "^0.183.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -20,9 +24,6 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "vite": "^5.4.10"
-  },
-  "optionalDependencies": {
-    "mapbox-gl": "^3.7.0"
   },
   "overrides": {
     "flatted": "^3.4.0"

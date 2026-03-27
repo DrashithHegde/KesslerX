@@ -4,7 +4,8 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import "./styles/globals.css";
 
 // ── Hooks ─────────────────────────────────────────────────────────────────
-import { useClock, useToast, useIntro, useMapbox } from "./hooks";
+import { useClock, useToast, useIntro} from "./hooks";
+import Globe from "./components/map/Globe";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 import { CITY_CONFIG } from "./constants/cities";
@@ -65,17 +66,6 @@ export default function App() {
   const [layerControlsVisible, setLayerControlsVisible] = useState(false);
   const [isLeavingCity, setIsLeavingCity] = useState(false);
   const activeCityLabel = activeCity ? CITY_CONFIG[activeCity]?.label : null;
-
-  // ── Mapbox container ref (used in production) ────────────────────────────
-  const mapContainerRef = useRef(null);
-
-  // Production Mapbox integration (stubs until token + npm package added)
-  useMapbox({
-    containerRef: mapContainerRef,
-    activeCity,
-    activeLayers,
-    onZoneClick: handleZoneClick,
-  });
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -240,9 +230,9 @@ export default function App() {
       {/* Grain texture */}
       <div className="grain" />
 
-      {/* ── Real Mapbox map container ───────────────────────────────────── */}
-      <div ref={mapContainerRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} />
-
+      {/* ── 3D Earth Simulation */}
+      <Globe />
+      
       {/* ── Satellite circular mask overlays ─────────────────────────────── */}
       {(activeCity || isLeavingCity) && (
         <div

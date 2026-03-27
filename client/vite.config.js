@@ -1,16 +1,16 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  server: {
-    port: 5173,
-    open: true,
-    proxy: {
-      "/api": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
+  // 1. Tell the dependency optimizer to allow modern JS
+  optimizeDeps: {
+    esbuildOptions: {
+      target: "esnext",
     },
   },
-});
+  // 2. Tell the final build process to allow modern JS
+  build: {
+    target: "esnext",
+  },
+})
