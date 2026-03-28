@@ -382,6 +382,7 @@ function SatelliteSwarm({
                 x: screenX,
                 y: screenY,
                 seed: Number(sat.details.NORAD_CAT_ID) || i + 1,
+                sat,
               });
             }
           }
@@ -565,6 +566,17 @@ export default function Globe({ satTypes, onSelectionPing }) {
     }
   }, []);
 
+  const handleMarkerClick = useCallback(
+    (marker) => {
+      if (!marker?.sat) return;
+      handleSelectSatellite(marker.sat);
+      if (onSelectionPing) {
+        onSelectionPing({ x: marker.x, y: marker.y });
+      }
+    },
+    [handleSelectSatellite, onSelectionPing]
+  );
+
   return (
     <div
       style={{
@@ -701,6 +713,18 @@ export default function Globe({ satTypes, onSelectionPing }) {
               top: `${marker.y}px`,
               backgroundImage: markerSprite ? `url(${markerSprite})` : "none",
               animationDelay: `${(marker.seed % 11) * 0.08}s`,
+            }}
+            role="button"
+            tabIndex={0}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleMarkerClick(marker);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleMarkerClick(marker);
+              }
             }}
           />
         ))}
