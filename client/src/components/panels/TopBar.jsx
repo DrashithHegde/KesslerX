@@ -38,7 +38,7 @@ export default function TopBar({ activeLayers, recTime, coords }) {
                 lineHeight: 1,
               }}
             >
-              GeoSense
+              KesslerX
             </div>
             <div
               style={{

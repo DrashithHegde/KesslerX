@@ -22,7 +22,7 @@ export default function ClassificationHeader() {
             }}
         >
             <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                TOP SECRET // GEOSENSE // NOFORN
+                TOP SECRET // KESSLERX // NOFORN
             </div>
             <div style={{ fontSize: "0.55rem", opacity: 0.85 }}>
                 SENTINEL-02 GEO-4208
@@ -44,7 +44,7 @@ export default function ClassificationHeader() {
                     fontFamily: "'DM Mono', monospace",
                 }}
             >
-                SUMMARY GEOSENSE URBAN MONITORING (INDIA) 8824KM ACTIVE
+                SUMMARY KESSLERX URBAN MONITORING (INDIA) 8824KM ACTIVE
             </div>
         </div>
     );

@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import "./styles/globals.css";
 
 // ── Hooks ─────────────────────────────────────────────────────────────────
-import { useClock, useToast, useIntro} from "./hooks";
+import { useClock, useToast, useIntro } from "./hooks";
 import Globe from "./components/map/Globe";
 
 // ── Constants ─────────────────────────────────────────────────────────────
@@ -30,6 +30,7 @@ import StatusBar from "./components/hud/StatusBar";
 import Toast from "./components/hud/Toast"; import ClassificationHeader from "./components/hud/ClassificationHeader";
 import OrbitalPass from "./components/hud/OrbitalPass";
 import TelemetryOverlay from "./components/hud/TelemetryOverlay";
+import CursorReticle from "./components/ui/CursorReticle";
 // ─────────────────────────────────────────────────────────────────────────────
 // App — root component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +38,12 @@ import TelemetryOverlay from "./components/hud/TelemetryOverlay";
 export default function App() {
   // ── Intro & panel visibility ─────────────────────────────────────────────
   const { phase: introPhase, panelsVisible } = useIntro();
+  const SAT_TYPE_CONFIG = [
+    { id: "PAYLOAD", label: "Satellites", icon: "🛰️", desc: "Active satellites (blue)" },
+    { id: "ROCKET BODY", label: "Rocket Bodies", icon: "🚀", desc: "Rocket stages (green)" },
+    { id: "DEBRIS", label: "Debris", icon: "✸", desc: "Trackable debris (red)" },
+    { id: "OTHER", label: "Other/Unknown", icon: "?", desc: "Other/unknown (gray)" },
+  ];
 
   // ── Live clock ───────────────────────────────────────────────────────────
   const recTime = useClock();
@@ -63,6 +70,29 @@ export default function App() {
   const [insightOpen, setInsightOpen] = useState(false);
   const [deepAnalysisOpen, setDeepAnalysisOpen] = useState(false);
   const [trendData, setTrendData] = useState([]);
+  const [satTypes, setSatTypes] = useState({
+    PAYLOAD: true,
+    "ROCKET BODY": true,
+    DEBRIS: true,
+    OTHER: true,
+  });
+  const [cursorPing, setCursorPing] = useState(null);
+
+  const emitCursorPing = useCallback(({ x, y }) => {
+    if (typeof window === "undefined") return;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const centerX = width * 0.5;
+    const centerY = height * 0.56;
+    const radius = Math.min(width, height) * 0.32;
+    const distance = Math.hypot(x - centerX, y - centerY);
+    if (distance > radius) return;
+    setCursorPing({ x, y, id: Date.now() });
+  }, [setCursorPing]);
+
+  function handleSatTypeToggle(typeId) {
+    setSatTypes((prev) => ({ ...prev, [typeId]: !prev[typeId] }));
+  }
   const [layerControlsVisible, setLayerControlsVisible] = useState(false);
   const [isLeavingCity, setIsLeavingCity] = useState(false);
   const activeCityLabel = activeCity ? CITY_CONFIG[activeCity]?.label : null;
@@ -189,6 +219,11 @@ export default function App() {
     showToast(`${layerLabel.toUpperCase()} LAYER ${action}`);
   }, [showToast, activeLayers]);
 
+  const handlePointerDown = useCallback((event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    emitCursorPing({ x: event.clientX, y: event.clientY });
+  }, [emitCursorPing]);
+
   // Prevent browser-level zoom (Ctrl/Cmd + wheel / +/- / 0)
   // so only the map surface performs zoom interactions.
   useEffect(() => {
@@ -226,20 +261,22 @@ export default function App() {
         background: "#0b0f14",
       }}
       className="scanlines vignette"
+      onPointerDownCapture={handlePointerDown}
     >
       {/* Grain texture */}
       <div className="grain" />
 
       {/* ── 3D Earth Simulation */}
-      <Globe />
-      
+      <Globe
+        satTypes={Object.keys(satTypes).filter((k) => satTypes[k])}
+        onSelectionPing={emitCursorPing}
+      />
+
       {/* ── Satellite circular mask overlays ─────────────────────────────── */}
-      {(activeCity || isLeavingCity) && (
-        <div
-          className="satellite-mask"
-          style={isLeavingCity ? { animation: "fadeOutMask 0.7s ease-in-out forwards" } : { animation: "fadeInMask 0.7s ease-in-out forwards" }}
-        />
-      )}
+      <div
+        className="satellite-mask"
+        style={{ animation: "fadeInMask 0.7s ease-in-out forwards" }}
+      />
 
       {/* ── Intro overlay ────────────────────────────────────────────────── */}
       <IntroOverlay phase={introPhase} />
@@ -247,66 +284,64 @@ export default function App() {
       {/* ── HUD corners ──────────────────────────────────────────────────── */}
       <HUDCorners />
 
-      {/* ── Panels (visible after intro) ─────────────────────────────────── */}
-      {panelsVisible && (
-        <>
-          <TopBar
-            activeLayers={activeLayers}
-            recTime={recTime}
-            coords={coords}
-          />
+      {/* ── Panels (always visible) ─────────────────────────────────────── */}
+      <>
+        <TopBar
+          activeLayers={activeLayers}
+          recTime={recTime}
+          coords={coords}
+        />
 
-          {/* Layer controls on left — appears after city animation */}
-          {layerControlsVisible && (
-            <LayerControls
-              activeLayers={activeLayers}
-              onToggleLayer={handleLayerToggle}
-            />
-          )}
+        {/* Layer controls on left — always visible */}
+        <LayerControls
+          activeLayers={activeLayers}
+          onToggleLayer={handleLayerToggle}
+          satTypes={satTypes}
+          onToggleSatType={handleSatTypeToggle}
+          satTypeConfig={SAT_TYPE_CONFIG}
+        />
 
-          {/* Insight panel on right */}
-          <InsightPanel
-            zone={selectedZone}
-            cityLabel={activeCityLabel}
-            trendData={trendData}
-            activeLayers={activeLayers}
-            isOpen={insightOpen}
-            onClose={handleInsightClose}
-            onDeepAnalysis={handleDeepAnalysisOpen}
-          />
+        {/* Insight panel on right — always visible */}
+        <InsightPanel
+          zone={selectedZone}
+          cityLabel={activeCityLabel}
+          trendData={trendData}
+          activeLayers={activeLayers}
+          isOpen={true}
+          onClose={handleInsightClose}
+          onDeepAnalysis={handleDeepAnalysisOpen}
+        />
 
-          <DeepAnalysisOverlay
-            zone={selectedZone}
-            cityLabel={activeCityLabel}
-            trendData={trendData}
-            activeLayers={activeLayers}
-            isOpen={deepAnalysisOpen}
-            onClose={handleDeepAnalysisClose}
-          />
+        <DeepAnalysisOverlay
+          zone={selectedZone}
+          cityLabel={activeCityLabel}
+          trendData={trendData}
+          activeLayers={activeLayers}
+          isOpen={deepAnalysisOpen}
+          onClose={handleDeepAnalysisClose}
+        />
 
-          <BottomBar
-            activeCity={activeCity}
-            onSelectCity={handleCitySelect}
-          />
-        </>
-      )}
+        <BottomBar
+          activeCity={activeCity}
+          onSelectCity={handleCitySelect}
+        />
+      </>
 
       {/* ── Toast ────────────────────────────────────────────────────────── */}
       <Toast message={toastMsg} phase={toastPhase} />
 
       {/* ── Intelligence Agency Overlays ─────────────────────────────────── */}
-      {panelsVisible && activeCity && (
-        <>
-          <ClassificationHeader />
-          <OrbitalPass recTime={recTime} />
-          <TelemetryOverlay coords={coords} />
-        </>
-      )}
+      <>
+        <ClassificationHeader />
+        <OrbitalPass recTime={recTime} />
+        <TelemetryOverlay coords={coords} />
+      </>
 
       {/* ── Status bar ───────────────────────────────────────────────────── */}
-      {panelsVisible && (
-        <StatusBar activeCity={activeCity} recTime={recTime} />
-      )}
+      <StatusBar activeCity={activeCity} recTime={recTime} />
+
+      {/* ── Cursor halo ──────────────────────────────────────────────────── */}
+      <CursorReticle ping={cursorPing} />
     </div>
   );
 }

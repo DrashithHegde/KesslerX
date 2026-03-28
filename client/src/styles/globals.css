@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────────────────────
-   GeoSense – Global Styles
+  KesslerX – Global Styles
    ───────────────────────────────────────────────────────────────────────────── */
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;500;600;700;800&display=swap');
@@ -24,7 +24,7 @@ body,
 
 body {
   font-family: 'DM Mono', monospace;
-  cursor: crosshair;
+  cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http://www.w3.org/2000/svg%27%20width%3D%2720%27%20height%3D%2720%27%20viewBox%3D%270%200%2032%2032%27%3E%3Cpath%20d%3D%27M4%203%20L4%2024%20L8.6%2019.4%20L12.5%2029%20L16.5%2027.2%20L12.7%2018.1%20L20%2018.1%20Z%27%20fill%3D%27%23050505%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%271.6%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E") 0 0, default;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -38,9 +38,9 @@ select {
   cursor: pointer !important;
 }
 
-/* Map canvas always stays as crosshair */
+/* Map canvas inherits whatever cursor the UI is using */
 .mapboxgl-canvas {
-  cursor: crosshair !important;
+  cursor: inherit !important;
 }
 
 /* ── CSS Variables ────────────────────────────────────────────────────────── */
@@ -63,7 +63,6 @@ select {
   --radius-lg: 14px;
 }
 
-/* ── Mapbox overrides ─────────────────────────────────────────────────────── */
 .mapboxgl-canvas {
   outline: none !important;
 }
@@ -417,12 +416,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
   0%,
   100% {
     opacity: 0.6;
-    textShadow: 0 0 8px rgba(217, 127, 42, 0.3);
+    text-shadow: 0 0 8px rgba(217, 127, 42, 0.3);
   }
 
   50% {
     opacity: 1;
-    textShadow: 0 0 16px rgba(217, 127, 42, 0.8);
+    text-shadow: 0 0 16px rgba(217, 127, 42, 0.8);
   }
 }
 
@@ -450,37 +449,37 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @keyframes glitchFade {
   0% {
     opacity: 0.65;
-    textShadow: 2px 2px rgba(217, 127, 42, 0.5);
+    text-shadow: 2px 2px rgba(217, 127, 42, 0.5);
     transform: translateX(0);
   }
 
   20% {
     opacity: 0.3;
-    textShadow: -2px 0 rgba(217, 127, 42, 0.8);
+    text-shadow: -2px 0 rgba(217, 127, 42, 0.8);
     transform: translateX(-2px);
   }
 
   40% {
     opacity: 0.65;
-    textShadow: 2px -2px rgba(217, 127, 42, 0.6);
+    text-shadow: 2px -2px rgba(217, 127, 42, 0.6);
     transform: translateX(1px);
   }
 
   60% {
     opacity: 0.4;
-    textShadow: -1px 1px rgba(217, 127, 42, 0.7);
+    text-shadow: -1px 1px rgba(217, 127, 42, 0.7);
     transform: translateX(-1px);
   }
 
   80% {
     opacity: 0.65;
-    textShadow: 1px -1px rgba(217, 127, 42, 0.5);
+    text-shadow: 1px -1px rgba(217, 127, 42, 0.5);
     transform: translateX(0);
   }
 
   100% {
     opacity: 0.65;
-    textShadow: 0 0 rgba(217, 127, 42, 0.5);
+    text-shadow: 0 0 rgba(217, 127, 42, 0.5);
     transform: translateX(0);
   }
 }
@@ -490,49 +489,49 @@ input[type="range"]::-webkit-slider-thumb:hover {
   0% {
     opacity: 0.85;
     color: #d97f2a;
-    textShadow: 0 0 8px rgba(217, 127, 42, 0.5);
+    text-shadow: 0 0 8px rgba(217, 127, 42, 0.5);
   }
 
   10% {
     opacity: 0.4;
     color: #ff9e4a;
-    textShadow: 0 0 12px rgba(255, 158, 74, 0.7);
+    text-shadow: 0 0 12px rgba(255, 158, 74, 0.7);
   }
 
   20% {
     opacity: 0.85;
     color: #d97f2a;
-    textShadow: 0 0 8px rgba(217, 127, 42, 0.5);
+    text-shadow: 0 0 8px rgba(217, 127, 42, 0.5);
   }
 
   35% {
     opacity: 0.55;
     color: #ffa844;
-    textShadow: 0 0 10px rgba(255, 168, 68, 0.6);
+    text-shadow: 0 0 10px rgba(255, 168, 68, 0.6);
   }
 
   50% {
     opacity: 0.75;
     color: #d97f2a;
-    textShadow: 0 0 12px rgba(217, 127, 42, 0.8);
+    text-shadow: 0 0 12px rgba(217, 127, 42, 0.8);
   }
 
   65% {
     opacity: 0.3;
     color: #ffb85a;
-    textShadow: 0 0 15px rgba(255, 184, 90, 0.9);
+    text-shadow: 0 0 15px rgba(255, 184, 90, 0.9);
   }
 
   80% {
     opacity: 0.85;
     color: #d97f2a;
-    textShadow: 0 0 8px rgba(217, 127, 42, 0.5);
+    text-shadow: 0 0 8px rgba(217, 127, 42, 0.5);
   }
 
   100% {
     opacity: 0.85;
     color: #d97f2a;
-    textShadow: 0 0 8px rgba(217, 127, 42, 0.5);
+    text-shadow: 0 0 8px rgba(217, 127, 42, 0.5);
   }
 }
 
@@ -739,6 +738,70 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background-size: 200px 200px;
 }
 
+/* ── Cursor reticle overlay ─────────────────────────────────────────────── */
+.cursor-reticle {
+  position: fixed;
+  width: 64px;
+  height: 64px;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  z-index: 60;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.cursor-reticle--active {
+  opacity: 1;
+}
+
+.cursor-reticle__ring {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(5, 5, 5, 0.95);
+  border-radius: 50%;
+  animation: cursorReticlePing 0.3s ease-out forwards;
+  transform-origin: center;
+}
+
+.cursor-reticle__ring--delay {
+  animation-delay: 0.05s;
+  opacity: 0.6;
+}
+
+.cursor-reticle__dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #050505;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes cursorReticlePing {
+  0% {
+    transform: scale(0.35);
+    opacity: 0.85;
+  }
+
+  65% {
+    transform: scale(1.05);
+    opacity: 0.4;
+  }
+
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+
 /* ── Severity gradient legend bar ────────────────────────────────────────── */
 .severity-gradient-bar {
   height: 5px;
@@ -813,4 +876,203 @@ input[type="range"]::-webkit-slider-thumb:hover {
   to {
     opacity: 0;
   }
+}
+
+/* ── Satellite Label Boxes (orange, like "SAT-XXXXX" in screenshots) ─────── */
+.sat-label-box {
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 5px;
+  background: rgba(15, 12, 8, 0.82);
+  border: 1px solid rgba(209, 138, 50, 0.55);
+  border-radius: 2px;
+  cursor: default;
+  white-space: nowrap;
+  transition: border-color 0.2s ease, background 0.2s ease;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  box-shadow: 0 0 6px rgba(209, 138, 50, 0.15);
+}
+
+.sat-label-box:hover {
+  border-color: rgba(209, 138, 50, 0.9);
+  background: rgba(209, 138, 50, 0.12);
+  box-shadow: 0 0 12px rgba(209, 138, 50, 0.3);
+}
+
+.sat-label-name {
+  font-family: 'DM Mono', monospace;
+  font-size: 6.5px;
+  font-weight: 500;
+  color: #d9a34a;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 4px rgba(217, 163, 74, 0.4);
+}
+
+/* ── Satellite Target Card (tooltip above selected satellite) ───────────── */
+.sat-target-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 10px;
+  background: rgba(10, 8, 4, 0.92);
+  border: 1px solid rgba(209, 138, 50, 0.65);
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow:
+    0 0 12px rgba(209, 138, 50, 0.2),
+    inset 0 0 8px rgba(209, 138, 50, 0.05);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.sat-target-name {
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  font-weight: 600;
+  color: #e8c56a;
+  letter-spacing: 0.6px;
+  text-shadow: 0 0 6px rgba(232, 197, 106, 0.4);
+  margin-bottom: 2px;
+}
+
+.sat-target-details {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'DM Mono', monospace;
+  font-size: 6.5px;
+  color: #d18a32;
+  letter-spacing: 0.4px;
+}
+
+.sat-target-sep {
+  color: rgba(209, 138, 50, 0.4);
+  font-size: 5px;
+}
+
+.sat-target-alt {
+  color: #f5c842;
+  text-shadow: 0 0 6px rgba(245, 200, 66, 0.5);
+}
+
+.sat-target-norad {
+  color: #c0792a;
+}
+
+/* PAYLOAD marker overlay (renders above mask, below panels) */
+.payload-marker-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.payload-marker {
+  position: absolute;
+  width: 18px;
+  height: 13px;
+  transform: translate(-50%, -50%);
+  background-repeat: no-repeat;
+  background-size: contain;
+  image-rendering: pixelated;
+  animation: payloadMarkerFlicker 2.1s steps(2, end) infinite;
+  opacity: 0.9;
+}
+
+@keyframes payloadMarkerFlicker {
+
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+
+  45% {
+    opacity: 0.65;
+  }
+}
+
+/* ── Target HUD Panel (fixed bottom-left, surveillance style) ───────────── */
+.target-hud-panel {
+  position: fixed;
+  bottom: 50px;
+  left: 20px;
+  width: 260px;
+  background: rgba(5, 10, 16, 0.92);
+  border: 1px solid rgba(209, 138, 50, 0.35);
+  border-radius: 4px;
+  padding: 14px 16px;
+  z-index: 15;
+  font-family: 'DM Mono', monospace;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    0 0 20px rgba(0, 0, 0, 0.5),
+    0 0 40px rgba(209, 138, 50, 0.05);
+  animation: slideInLeftFlatTop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.target-hud-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(209, 138, 50, 0.2);
+}
+
+.target-hud-rec {
+  color: #ff3b3b;
+  font-size: 8px;
+  animation: recBlink 1.6s ease-in-out infinite;
+}
+
+.target-hud-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #d9a34a;
+  letter-spacing: 1.5px;
+  text-shadow: 0 0 8px rgba(217, 163, 74, 0.3);
+}
+
+.target-hud-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+
+.target-hud-label {
+  font-size: 9px;
+  color: rgba(200, 214, 229, 0.4);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.target-hud-value {
+  font-size: 10px;
+  color: rgba(200, 214, 229, 0.88);
+  letter-spacing: 0.4px;
+}
+
+.target-hud-clear {
+  margin-top: 12px;
+  width: 100%;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid rgba(255, 59, 59, 0.4);
+  border-radius: 3px;
+  color: #ff5555;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.target-hud-clear:hover {
+  background: rgba(255, 59, 59, 0.08);
+  border-color: rgba(255, 59, 59, 0.7);
+  box-shadow: 0 0 12px rgba(255, 59, 59, 0.15);
 }

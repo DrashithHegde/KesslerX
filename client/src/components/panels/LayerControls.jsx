@@ -65,8 +65,7 @@ function LayerChip({ config, active, onClick }) {
 // Floating left-side panel: data layer chips
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function LayerControls({ activeLayers, onToggleLayer }) {
-
+export default function LayerControls({ activeLayers, onToggleLayer, satTypes, onToggleSatType, satTypeConfig }) {
   return (
     <div
       className="slide-in-left"
@@ -83,9 +82,9 @@ export default function LayerControls({ activeLayers, onToggleLayer }) {
         animationDelay: "0.1s",
       }}
     >
-      {/* Layer chips */}
+      {/* Satellite type chips only */}
       <div className="glass" style={{ padding: "10px" }}>
-        {/* Header */}
+        {/* Header for satellite types */}
         <div
           style={{
             padding: "0 4px 8px",
@@ -103,23 +102,22 @@ export default function LayerControls({ activeLayers, onToggleLayer }) {
               textTransform: "uppercase",
             }}
           >
-            Metric Layers
+            Satellite Types
           </span>
         </div>
 
-        {/* Click chips */}
+        {/* Click chips for satellite types */}
         <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-          {Object.values(LAYER_CONFIG).map((cfg) => (
+          {satTypeConfig.map((cfg) => (
             <LayerChip
               key={cfg.id}
               config={cfg}
-              active={activeLayers[cfg.id]}
-              onClick={() => onToggleLayer(cfg.id)}
+              active={!!satTypes[cfg.id]}
+              onClick={() => onToggleSatType(cfg.id)}
             />
           ))}
         </div>
       </div>
-
     </div>
   );
 }
