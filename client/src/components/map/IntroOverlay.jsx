@@ -71,7 +71,7 @@ export default function IntroOverlay({ phase }) {
         <span>SYS BOOT // LINK ACTIVE</span>
       </div>
 
-      {/* ── GEOSENSE wordmark ────────────────────────────────────────────── */}
+      {/* ── KESSLERX wordmark ───────────────────────────────────────────── */}
       <div style={{
         fontFamily: "'Syne', sans-serif",
         fontSize: "3.6rem", fontWeight: 800,
@@ -80,7 +80,7 @@ export default function IntroOverlay({ phase }) {
         lineHeight: 1,
         marginTop: "50px",
       }}>
-        GEOSENSE
+        KESSLERX
       </div>
 
       {/* ── Hair-line divider ──────────────────────────────────────────── */}
