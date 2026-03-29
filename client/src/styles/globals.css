@@ -980,7 +980,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
   animation: payloadMarkerFlicker 2.1s steps(2, end) infinite;
   opacity: 0.9;
   pointer-events: auto;
-  cursor: pointer;
+  cursor: inherit;
+}
+
+.payload-marker[role="button"] {
+  cursor: inherit !important;
 }
 
 @keyframes payloadMarkerFlicker {

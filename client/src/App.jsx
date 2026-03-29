@@ -8,7 +8,6 @@ import { useClock, useToast, useIntro } from "./hooks";
 import Globe from "./components/map/Globe";
 
 // ── Constants ─────────────────────────────────────────────────────────────
-import { CITY_CONFIG } from "./constants/cities";
 import { LAYER_CONFIG } from "./constants/layers";
 
 // ── Utils ─────────────────────────────────────────────────────────────────
@@ -41,7 +40,7 @@ export default function App() {
   const SAT_TYPE_CONFIG = [
     { id: "PAYLOAD", label: "Satellites", icon: "🛰️", desc: "Active satellites (blue)" },
     { id: "ROCKET BODY", label: "Rocket Bodies", icon: "🚀", desc: "Rocket stages (green)" },
-    { id: "DEBRIS", label: "Debris", icon: "✸", desc: "Trackable debris (red)" },
+    { id: "DEBRIS", label: "Debris", icon: "✸", desc: "Trackable debris (dusky brown)" },
     { id: "OTHER", label: "Other/Unknown", icon: "?", desc: "Other/unknown (gray)" },
   ];
 
@@ -52,7 +51,7 @@ export default function App() {
   const { message: toastMsg, phase: toastPhase, show: showToast } = useToast();
 
   // ── City & layer state ───────────────────────────────────────────────────
-  const [activeCity, setActiveCity] = useState(null);   // starts on India overview
+  const activeCity = null;   // City selection handled elsewhere (Pan-India overview)
   const [activeLayers, setActiveLayers] = useState({
     aqi: true,
     ndvi: false,
@@ -76,6 +75,8 @@ export default function App() {
     DEBRIS: true,
     OTHER: true,
   });
+  const [simRunning, setSimRunning] = useState(false);
+  const [simSpeed, setSimSpeed] = useState(1);
   const [cursorPing, setCursorPing] = useState(null);
 
   const emitCursorPing = useCallback(({ x, y }) => {
@@ -93,55 +94,47 @@ export default function App() {
   function handleSatTypeToggle(typeId) {
     setSatTypes((prev) => ({ ...prev, [typeId]: !prev[typeId] }));
   }
-  const [layerControlsVisible, setLayerControlsVisible] = useState(false);
-  const [isLeavingCity, setIsLeavingCity] = useState(false);
-  const activeCityLabel = activeCity ? CITY_CONFIG[activeCity]?.label : null;
+  const activeCityLabel = null;
+
+  const handleSimStart = useCallback(() => {
+    setSimRunning((prev) => {
+      if (prev) return prev;
+      showToast("SIMULATION RUNNING // LIVE PLAYBACK");
+      return true;
+    });
+  }, [showToast]);
+
+  const handleSimPause = useCallback(() => {
+    setSimRunning((prev) => {
+      if (!prev) return prev;
+      showToast("SIMULATION PAUSED");
+      return false;
+    });
+  }, [showToast]);
+
+  const handleSimSpeedChange = useCallback((nextSpeed) => {
+    setSimSpeed((prev) => {
+      if (prev === nextSpeed) return prev;
+      showToast(`SIMULATION SPEED ${nextSpeed}X`);
+      return nextSpeed;
+    });
+  }, [showToast]);
+
+  const handleSimAddSatellite = useCallback(() => {
+    showToast("SIMULATION EVENT // DEMO SATELLITE DEPLOYED");
+  }, [showToast]);
+
+  const handleSimTriggerCollision = useCallback(() => {
+    showToast("SIMULATION EVENT // COLLISION SCENARIO TRIGGERED");
+  }, [showToast]);
+
+  const handleSimReset = useCallback(() => {
+    setSimRunning(false);
+    setSimSpeed(1);
+    showToast("SIMULATION RESET // SYSTEM STANDBY");
+  }, [showToast]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
-
-  function handleCitySelect(cityId) {
-    if (cityId === "india") {
-      // Start zoom-out and fade-out simultaneously
-      setSelectedZone(null);
-      setInsightOpen(false);
-      setDeepAnalysisOpen(false);
-      setIsLeavingCity(true);
-      setLayerControlsVisible(false);
-      setActiveCity(null); // Start map zoom-out immediately
-
-      setTimeout(() => {
-        setIsLeavingCity(false); // Remove mask fade animation
-        setCoords({
-          lat: "22.0000",
-          lng: "79.0000",
-        });
-        showToast("RETURNED TO PAN-INDIA OVERVIEW // NATIONAL SWEEP ACTIVE");
-      }, 700);
-      return;
-    }
-
-    if (activeCity === cityId) return;
-
-    setSelectedZone(null);
-    setInsightOpen(false);
-    setDeepAnalysisOpen(false);
-    setLayerControlsVisible(false);
-    setIsLeavingCity(false);
-    setActiveCity(cityId);
-
-    const city = CITY_CONFIG[cityId];
-    setCoords({
-      lat: city.center[1].toFixed(4),
-      lng: city.center[0].toFixed(4),
-    });
-
-    showToast(`SCANNING ${city.label.toUpperCase()} // ANOMALY DETECTION ACTIVE`);
-
-    // Show layer controls after zoom animation (700ms)
-    setTimeout(() => {
-      setLayerControlsVisible(true);
-    }, 700);
-  }
 
   function handleZoneClick(zone) {
     setSelectedZone(zone);
@@ -301,17 +294,6 @@ export default function App() {
           satTypeConfig={SAT_TYPE_CONFIG}
         />
 
-        {/* Insight panel on right — always visible */}
-        <InsightPanel
-          zone={selectedZone}
-          cityLabel={activeCityLabel}
-          trendData={trendData}
-          activeLayers={activeLayers}
-          isOpen={true}
-          onClose={handleInsightClose}
-          onDeepAnalysis={handleDeepAnalysisOpen}
-        />
-
         <DeepAnalysisOverlay
           zone={selectedZone}
           cityLabel={activeCityLabel}
@@ -322,8 +304,14 @@ export default function App() {
         />
 
         <BottomBar
-          activeCity={activeCity}
-          onSelectCity={handleCitySelect}
+          simRunning={simRunning}
+          simSpeed={simSpeed}
+          onSimStart={handleSimStart}
+          onSimPause={handleSimPause}
+          onSimSpeedChange={handleSimSpeedChange}
+          onSimAddSatellite={handleSimAddSatellite}
+          onSimTriggerCollision={handleSimTriggerCollision}
+          onSimReset={handleSimReset}
         />
       </>
 
