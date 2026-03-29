@@ -19,6 +19,11 @@ const EARTH_TEXTURE_URL =
 const EARTH_RADIUS = 1;
 const EARTH_POLAR_SCALE = 0.92; // Stylized flattening to mimic the CRT reference silhouette
 const MARKER_HUD_COLOR = "#d2882e"; // Slightly darker, desaturated orange for PAYLOAD markers
+const BASE_SATELLITE_RADIUS = 0.005; // Geometry radius for instanced dots
+const NON_PAYLOAD_HIT_PIXEL_DIAMETER = 34; // Desired on-screen diameter (px) for non-payload hit areas
+const NON_PAYLOAD_HIT_SCALE_MIN = 1; // Prevents collapsing when zoomed in
+const NON_PAYLOAD_HIT_SCALE_MAX = 22; // Avoids runaway scales when zoomed far out
+const EARTH_OCCLUSION_RADIUS = EARTH_RADIUS * 1.01; // Slightly above Earth's surface for occlusion tests
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Marker sprite (used for DOM overlay)
@@ -263,13 +268,17 @@ function SatelliteSwarm({
   onPayloadOverlayUpdate,
   onSelectionPing,
 }) {
+  const { camera } = useThree();
   const meshRef = useRef();
+  const hitboxRef = useRef();
+  const satPositionsRef = useRef([]);
   const [satData, setSatData] = useState([]);
   const overlayUpdateRef = useRef(0);
   const tmpWorldPos = useMemo(() => new THREE.Vector3(), []);
   const tmpCamPos = useMemo(() => new THREE.Vector3(), []);
   const tmpDir = useMemo(() => new THREE.Vector3(), []);
   const tmpProjected = useMemo(() => new THREE.Vector3(), []);
+  const tmpClickDir = useMemo(() => new THREE.Vector3(), []);
 
   // Fetch satellite data from backend
   useEffect(() => {
@@ -283,7 +292,7 @@ function SatelliteSwarm({
           const records = data.data.map((sat) => {
             let colorHex = "#888888";
             if (sat.OBJECT_TYPE === "PAYLOAD") colorHex = "#6395EE";
-            else if (sat.OBJECT_TYPE === "DEBRIS") colorHex = "#DA2C43";
+            else if (sat.OBJECT_TYPE === "DEBRIS") colorHex = "#b08a6b";
             else if (sat.OBJECT_TYPE === "ROCKET BODY") colorHex = "#00FF00";
             return {
               satrec: twoline2satrec(sat.TLE_LINE1, sat.TLE_LINE2),
@@ -300,10 +309,20 @@ function SatelliteSwarm({
 
   // Filter by active types
   const filteredSatData = useMemo(() => {
-    return satTypes && satTypes.length > 0
-      ? satData.filter((s) => satTypes.includes(s.type))
-      : satData;
+    if (!Array.isArray(satTypes)) {
+      return satData;
+    }
+    if (satTypes.length === 0) {
+      return [];
+    }
+    return satData.filter((s) => satTypes.includes(s.type));
   }, [satData, satTypes]);
+
+  useEffect(() => {
+    if (filteredSatData.length === 0 && onPayloadOverlayUpdate) {
+      onPayloadOverlayUpdate([]);
+    }
+  }, [filteredSatData.length, onPayloadOverlayUpdate]);
 
   // Set instance colors
   useEffect(() => {
@@ -317,7 +336,12 @@ function SatelliteSwarm({
 
   // Animate positions + collect payload label positions
   useFrame((state) => {
-    if (!meshRef.current || filteredSatData.length === 0) return;
+    if (
+      !meshRef.current ||
+      !hitboxRef.current ||
+      filteredSatData.length === 0
+    )
+      return;
 
     const now = new Date();
     const gmst = gstime(now);
@@ -326,6 +350,7 @@ function SatelliteSwarm({
     const camera = state.camera;
     const viewport = state.size;
     const camPos = tmpCamPos.copy(camera.position);
+    const tanHalfFov = Math.tan((camera.fov * Math.PI) / 360);
 
     filteredSatData.forEach((sat, i) => {
       const pv = propagate(sat.satrec, now);
@@ -340,20 +365,45 @@ function SatelliteSwarm({
         const z = r * Math.cos(lat) * Math.sin(lon);
         const y = r * Math.sin(lat);
 
-        dummy.position.set(x, y, -z);
+        tmpWorldPos.set(x, y, -z);
+
+        if (!satPositionsRef.current[i]) {
+          satPositionsRef.current[i] = new THREE.Vector3();
+        }
+        satPositionsRef.current[i].copy(tmpWorldPos);
+
+        dummy.position.copy(tmpWorldPos);
+        dummy.scale.setScalar(1);
         dummy.updateMatrix();
         meshRef.current.setMatrixAt(i, dummy.matrix);
 
-        if (sat.type === "PAYLOAD") {
-          tmpWorldPos.set(x, y, -z);
+        let hitScale = 1;
+        if (sat.type !== "PAYLOAD") {
+          const dist = tmpWorldPos.distanceTo(camPos);
+          const worldDiameter =
+            (NON_PAYLOAD_HIT_PIXEL_DIAMETER * 2 * dist * tanHalfFov) /
+            viewport.height;
+          const desiredRadius = worldDiameter / 2;
+          const scaleFromRadius = desiredRadius / BASE_SATELLITE_RADIUS;
+          hitScale = THREE.MathUtils.clamp(
+            scaleFromRadius,
+            NON_PAYLOAD_HIT_SCALE_MIN,
+            NON_PAYLOAD_HIT_SCALE_MAX
+          );
+        }
 
+        dummy.scale.setScalar(hitScale);
+        dummy.updateMatrix();
+        hitboxRef.current.setMatrixAt(i, dummy.matrix);
+
+        if (sat.type === "PAYLOAD") {
           const dir = tmpDir.subVectors(tmpWorldPos, camPos);
           const a = dir.lengthSq();
           let occluded = false;
           if (a > 0.0) {
             const b = 2 * camPos.dot(dir);
-            const occlusionRadius = EARTH_RADIUS * 1.01;
-            const c = camPos.lengthSq() - occlusionRadius * occlusionRadius;
+            const c =
+              camPos.lengthSq() - EARTH_OCCLUSION_RADIUS * EARTH_OCCLUSION_RADIUS;
             const discriminant = b * b - 4 * a * c;
             if (discriminant >= 0) {
               const sqrtDisc = Math.sqrt(discriminant);
@@ -391,24 +441,55 @@ function SatelliteSwarm({
     });
 
     meshRef.current.instanceMatrix.needsUpdate = true;
+    hitboxRef.current.instanceMatrix.needsUpdate = true;
 
-    if (onPayloadOverlayUpdate) {
-      const elapsed = state.clock.getElapsedTime();
-      if (elapsed - overlayUpdateRef.current > 0.05) {
-        overlayUpdateRef.current = elapsed;
+    const elapsed = state.clock.getElapsedTime();
+    if (elapsed - overlayUpdateRef.current > 0.05) {
+      overlayUpdateRef.current = elapsed;
+      if (onPayloadOverlayUpdate) {
         onPayloadOverlayUpdate(overlayPayload);
       }
     }
   });
 
+  const isOccludedFromCamera = useCallback(
+    (satPos) => {
+      if (!satPos) return false;
+      const camPos = camera.position;
+      tmpClickDir.subVectors(satPos, camPos);
+      const a = tmpClickDir.lengthSq();
+      if (a <= 0) return false;
+      const b = 2 * camPos.dot(tmpClickDir);
+      const c =
+        camPos.lengthSq() - EARTH_OCCLUSION_RADIUS * EARTH_OCCLUSION_RADIUS;
+      const discriminant = b * b - 4 * a * c;
+      if (discriminant < 0) return false;
+      const sqrtDisc = Math.sqrt(discriminant);
+      const t1 = (-b - sqrtDisc) / (2 * a);
+      const t2 = (-b + sqrtDisc) / (2 * a);
+      const tMin = Math.min(t1, t2);
+      const tMax = Math.max(t1, t2);
+      return (tMin >= 0 && tMin <= 1) || (tMax >= 0 && tMax <= 1);
+    },
+    [camera]
+  );
+
   const handleClick = (e) => {
     e.stopPropagation();
+    const instanceId = e.instanceId;
+    if (instanceId === undefined || instanceId >= filteredSatData.length) {
+      return;
+    }
+
+    const satPos = satPositionsRef.current[instanceId];
+    if (isOccludedFromCamera(satPos)) {
+      return;
+    }
+
     if (onSelectionPing) {
       onSelectionPing({ x: e.clientX, y: e.clientY });
     }
-    if (e.instanceId !== undefined && e.instanceId < filteredSatData.length) {
-      onSelectSatellite(filteredSatData[e.instanceId]);
-    }
+    onSelectSatellite(filteredSatData[instanceId]);
   };
 
   if (filteredSatData.length === 0) return null;
@@ -416,13 +497,24 @@ function SatelliteSwarm({
   return (
     <>
       {/* Instanced satellite dots */}
+      <instancedMesh ref={meshRef} args={[null, null, filteredSatData.length]}>
+        <sphereGeometry args={[BASE_SATELLITE_RADIUS, 8, 8]} />
+        <meshBasicMaterial color="#ffffff" toneMapped={false} />
+      </instancedMesh>
+
+      {/* Invisible hitboxes to keep dots clickable */}
       <instancedMesh
-        ref={meshRef}
+        ref={hitboxRef}
         args={[null, null, filteredSatData.length]}
         onClick={handleClick}
       >
-        <sphereGeometry args={[0.005, 8, 8]} />
-        <meshBasicMaterial color="#ffffff" toneMapped={false} />
+        <sphereGeometry args={[BASE_SATELLITE_RADIUS, 8, 8]} />
+        <meshBasicMaterial
+          transparent
+          opacity={0}
+          depthWrite={false}
+          depthTest={false}
+        />
       </instancedMesh>
 
     </>
@@ -445,7 +537,7 @@ function SelectionHalo() {
 
   return (
     <>
-      <mesh ref={ringRef}>
+      <mesh ref={ringRef} renderOrder={999}>
         <ringGeometry args={[0.05, 0.068, 48]} />
         <meshBasicMaterial
           color="#f5c842"
@@ -453,6 +545,8 @@ function SelectionHalo() {
           opacity={0.65}
           toneMapped={false}
           side={THREE.DoubleSide}
+          depthTest={false}
+          depthWrite={false}
         />
       </mesh>
     </>
@@ -476,14 +570,24 @@ function SelectedSatelliteMarker({ sat }) {
   return (
     <group ref={markerRef}>
       {/* Large solid dot (like the yellow satellite in SS3) */}
-      <mesh>
+      <mesh renderOrder={998}>
         <sphereGeometry args={[0.022, 16, 16]} />
-        <meshBasicMaterial color="#f5c842" toneMapped={false} />
+        <meshBasicMaterial
+          color="#f5c842"
+          toneMapped={false}
+          depthTest={false}
+          depthWrite={false}
+        />
       </mesh>
 
       {/* Outer halo glow */}
       <mesh>
-        <sphereGeometry args={[0.038, 16, 16]} />
+        <meshBasicMaterial
+          color="#f5c842"
+          toneMapped={false}
+          depthTest={false}
+          depthWrite={false}
+        />
         <meshBasicMaterial
           color="#f5c842"
           transparent
@@ -494,6 +598,8 @@ function SelectedSatelliteMarker({ sat }) {
 
       {/* Screen-space facing selection ring */}
       <SelectionHalo />
+      depthTest={false}
+      depthWrite={false}
 
       {/* Info card floating above the satellite */}
       {posData && (
@@ -530,6 +636,15 @@ export default function Globe({ satTypes, onSelectionPing }) {
   const controlsRef = useRef();
   const [payloadOverlayMarkers, setPayloadOverlayMarkers] = useState([]);
   const markerSprite = useMemo(() => createPayloadMarkerSprite(), []);
+  const orbitColor = selectedSat
+    ? selectedSat.type === "PAYLOAD"
+      ? "#6395EE"
+      : selectedSat.type === "ROCKET BODY"
+        ? "#00FF00"
+        : selectedSat.type === "DEBRIS"
+          ? "#b08a6b"
+          : "#ff4444"
+    : "#ff4444";
 
   useEffect(() => {
     if (!selectedSat) return;
@@ -609,7 +724,7 @@ export default function Globe({ satTypes, onSelectionPing }) {
                   selectedSat.type === "PAYLOAD"
                     ? "#6395EE"
                     : selectedSat.type === "DEBRIS"
-                      ? "#DA2C43"
+                      ? "#b08a6b"
                       : "#00FF00",
               }}
             >
@@ -680,8 +795,17 @@ export default function Globe({ satTypes, onSelectionPing }) {
 
         {/* Orbit trajectory for selected satellite */}
         {selectedSat && (
-          <OrbitPath satrec={selectedSat.satrec} color="#ff4444" opacity={0.6} />
+          <OrbitPath
+            satrec={selectedSat.satrec}
+            color={orbitColor}
+            pastColor={orbitColor}
+            futureColor={orbitColor}
+            opacity={0.6}
+          />
         )}
+
+        {/* Selected satellite marker */}
+        {selectedSat && <SelectedSatelliteMarker sat={selectedSat} />}
 
         {/* Surveillance camera tracker (disabled: keep Earth as main view) */}
         {false && (
@@ -713,6 +837,7 @@ export default function Globe({ satTypes, onSelectionPing }) {
               top: `${marker.y}px`,
               backgroundImage: markerSprite ? `url(${markerSprite})` : "none",
               animationDelay: `${(marker.seed % 11) * 0.08}s`,
+              cursor: "inherit",
             }}
             role="button"
             tabIndex={0}
