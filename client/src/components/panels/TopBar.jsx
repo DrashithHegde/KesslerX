@@ -6,6 +6,7 @@
 export default function TopBar({ activeLayers, recTime, coords }) {
   const primaryLayer =
     Object.entries(activeLayers).find(([, v]) => v)?.[0]?.toUpperCase() || "—";
+  const activeLayerLabel = primaryLayer === "AQI" ? "CRT" : primaryLayer;
 
   return (
     <div
@@ -121,7 +122,7 @@ export default function TopBar({ activeLayers, recTime, coords }) {
             color: "rgba(200,214,229,0.28)",
           }}
         >
-          ACTIVE LAYER: {primaryLayer}
+          ACTIVE LAYER: <span style={{ color: "rgba(0,229,255,0.55)" }}>{activeLayerLabel}</span>
         </div>
       </div>
     </div>

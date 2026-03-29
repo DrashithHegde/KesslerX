@@ -1,207 +1,191 @@
-import { CITY_CONFIG } from "../../constants/cities";
+import { useEffect, useRef, useState } from "react";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SeverityLegend
-// Horizontal glowing gradient bar with impact labels
-// ─────────────────────────────────────────────────────────────────────────────
+const TIMELINE_DURATION_MS = 20000; // baseline sweep length
 
-function SeverityLegend() {
+function formatSimTime(progress) {
+  const totalSeconds = Math.round(progress * 3600); // pretend 60-minute range
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function SpeedButton({ value, active, onClick }) {
+  const base =
+    "px-3 py-1 text-[0.65rem] tracking-[0.2em] uppercase rounded-md border transition-all duration-200";
+  const state = active
+    ? "border-[#00D1FF]/80 text-[#00D1FF] shadow-[0_0_12px_rgba(0,209,255,0.4)] bg-[#00D1FF]/10"
+    : "border-white/10 text-white/60 hover:border-[#00D1FF]/50";
   return (
-    <div
-      className="glass-sharp"
-      style={{
-        maxWidth: 560,
-        margin: "0 auto 10px",
-        padding: "8px 18px 10px",
-      }}
-    >
-      <div className="severity-gradient-bar" style={{ marginBottom: 5 }} />
+    <button type="button" onClick={() => onClick(value)} className={`${base} ${state}`}>
+      {value}x
+    </button>
+  );
+}
+
+function ScenarioButton({ label, onClick, tone = "default" }) {
+  const base =
+    "flex-1 min-w-[120px] px-3 py-2 text-[0.58rem] tracking-[0.2em] uppercase rounded-lg border transition-all duration-200";
+  const state =
+    tone === "warning"
+      ? "border-[#FF8C42]/70 text-[#FF8C42] bg-[#FF8C42]/10 hover:bg-[#FF8C42]/20 shadow-[0_0_14px_rgba(255,140,66,0.35)]"
+      : "border-white/10 text-white/70 hover:border-[#00D1FF]/50 hover:text-[#00D1FF]";
+  return (
+    <button type="button" onClick={onClick} className={`${base} ${state}`}>
+      {label}
+    </button>
+  );
+}
+
+function Timeline({ progress, onSeek }) {
+  const trackRef = useRef(null);
+
+  const handleClick = (event) => {
+    if (!trackRef.current || typeof onSeek !== "function") return;
+    const rect = trackRef.current.getBoundingClientRect();
+    const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    onSeek(ratio);
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between text-[0.55rem] uppercase tracking-[0.3em] text-white/50">
+        <span>Timeline</span>
+        <span>Δ {formatSimTime(progress)}</span>
+      </div>
       <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          fontSize: "0.52rem",
-          letterSpacing: "0.12em",
-          color: "var(--text-dim)",
-          textTransform: "uppercase",
-        }}
+        ref={trackRef}
+        onClick={handleClick}
+        className="relative h-2 rounded-full bg-white/10 cursor-pointer"
       >
-        <span style={{ color: "#1dd1a1" }}>● Low Impact</span>
-        <span>Moderate</span>
-        <span>Severe</span>
-        <span style={{ color: "#ff3b3b" }}>● Critical</span>
+        <div
+          className="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-[#00D1FF]/70 to-[#00D1FF]/30"
+          style={{ width: `${progress * 100}%` }}
+        />
+        <div
+          className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border border-[#00D1FF] bg-[#0B0F14] shadow-[0_0_12px_rgba(0,209,255,0.6)]"
+          style={{ left: `calc(${progress * 100}% - 8px)` }}
+        />
       </div>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CitySelector
-// Row of pill buttons for selecting the active city
-// ─────────────────────────────────────────────────────────────────────────────
+export default function BottomBar({
+  simRunning,
+  simSpeed,
+  onSimStart,
+  onSimPause,
+  onSimSpeedChange,
+  onSimAddSatellite,
+  onSimTriggerCollision,
+  onSimReset,
+}) {
+  const [timelineProgress, setTimelineProgress] = useState(0);
+  const rafRef = useRef(null);
 
-function CitySelector({ activeCity, onSelect }) {
-  const isIndiaActive = !activeCity;
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !simRunning) {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      return undefined;
+    }
+
+    let last = performance.now();
+    const duration = TIMELINE_DURATION_MS / simSpeed;
+
+    const tick = (now) => {
+      const delta = now - last;
+      last = now;
+      setTimelineProgress((prev) => (prev + delta / duration) % 1);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [simRunning, simSpeed]);
+
+  const handleSeek = (ratio) => {
+    setTimelineProgress(ratio);
+  };
+
+  const handleReset = () => {
+    setTimelineProgress(0);
+    onSimReset();
+  };
+
+  const handlePlayPause = () => {
+    if (simRunning) {
+      onSimPause();
+    } else {
+      onSimStart();
+    }
+  };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 6,
-      }}
-    >
-      <button
-        onClick={() => onSelect("india")}
-        style={{
-          padding: "6px 18px",
-          background: isIndiaActive
-            ? "rgba(0,229,255,0.1)"
-            : "rgba(11,15,20,0.72)",
-          backdropFilter: "blur(16px)",
-          border: isIndiaActive
-            ? "1px solid rgba(0,229,255,0.42)"
-            : "1px solid rgba(0,229,255,0.12)",
-          borderRadius: 4,
-          color: isIndiaActive
-            ? "rgba(0,229,255,0.9)"
-            : "rgba(200,214,229,0.45)",
-          fontFamily: "'DM Mono', monospace",
-          fontSize: "0.62rem",
-          lineHeight: 1.35,
-          letterSpacing: "0.14em",
-          cursor: "pointer",
-          textTransform: "uppercase",
-          boxShadow: isIndiaActive
-            ? "0 0 18px rgba(0,229,255,0.18), inset 0 0 8px rgba(0,229,255,0.06)"
-            : "none",
-          transition: "all 0.25s ease",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        {isIndiaActive && (
-          <span
-            style={{
-              display: "inline-block",
-              width: 5,
-              height: 5,
-              borderRadius: "50%",
-              background: "#00e5ff",
-              boxShadow: "0 0 6px #00e5ff",
-              flexShrink: 0,
-            }}
-          />
-        )}
-        Pan-India
-      </button>
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center pb-6">
+      <div className="pointer-events-auto w-[520px] max-w-[92vw] rounded-2xl border border-white/10 bg-[#0B0F14]/90 px-6 py-4 shadow-[0_8px_40px_rgba(0,0,0,0.65)] backdrop-blur-2xl">
+        <div className="flex items-center justify-between text-[0.6rem] uppercase tracking-[0.4em] text-white/60">
+          <span>Simulation Control</span>
+          <span className="text-[#00D1FF]">T+ {formatSimTime(timelineProgress)}</span>
+        </div>
 
-      {Object.values(CITY_CONFIG).map((city) => {
-        const isActive = activeCity === city.id;
-
-        return (
+        <div className="mt-3 flex items-center gap-4">
           <button
-            key={city.id}
-            onClick={() => onSelect(city.id)}
-            style={{
-              padding: "6px 18px",
-              background: isActive
-                ? "rgba(0,229,255,0.1)"
-                : "rgba(11,15,20,0.72)",
-              backdropFilter: "blur(16px)",
-              border: isActive
-                ? "1px solid rgba(0,229,255,0.42)"
-                : "1px solid rgba(0,229,255,0.12)",
-              borderRadius: 4,
-              color: isActive
-                ? "rgba(0,229,255,0.9)"
-                : "rgba(200,214,229,0.45)",
-              fontFamily: "'DM Mono', monospace",
-              fontSize: "0.62rem",
-              lineHeight: 1.35,
-              letterSpacing: "0.14em",
-              cursor: "pointer",
-              textTransform: "uppercase",
-              boxShadow: isActive
-                ? "0 0 18px rgba(0,229,255,0.18), inset 0 0 8px rgba(0,229,255,0.06)"
-                : "none",
-              transition: "all 0.25s ease",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
+            type="button"
+            onClick={handlePlayPause}
+            className={`h-12 w-12 rounded-full border transition-all duration-200 shadow-[0_0_18px_rgba(0,209,255,0.35)] flex items-center justify-center text-lg ${
+              simRunning
+                ? "border-[#FF8C42]/60 text-[#FF8C42] bg-[#FF8C42]/10"
+                : "border-[#00D1FF]/70 text-[#00D1FF] bg-[#00D1FF]/10"
+            }`}
           >
-            {isActive && (
-              <span
-                style={{
-                  display: "inline-block",
-                  width: 5,
-                  height: 5,
-                  borderRadius: "50%",
-                  background: "#00e5ff",
-                  boxShadow: "0 0 6px #00e5ff",
-                  flexShrink: 0,
-                }}
-              />
-            )}
-            {city.label}
+            {simRunning ? "❚❚" : "▶"}
           </button>
-        );
-      })}
-    </div>
-  );
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BottomBar
-// Fixed bottom panel containing legend + city selector
-// ─────────────────────────────────────────────────────────────────────────────
-
-export default function BottomBar({ activeCity, onSelectCity }) {
-  return (
-    <div
-      className="slide-in-up"
-      style={{
-        position: "fixed",
-        bottom: 0,
-        left: 0,
-        right: 0,
-        zIndex: 30,
-        padding: "0 20px 36px", // 36px = above 22px status bar
-        animationDelay: "0.2s",
-      }}
-    >
-      {/* Bottom left intel text - only show when zoomed into city */}
-      {activeCity && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: 105,
-            left: 20,
-            fontSize: "0.58rem",
-            letterSpacing: "0.15em",
-            color: "rgba(217,127,42,0.75)",
-            textTransform: "uppercase",
-            maxWidth: 200,
-            lineHeight: 1.4,
-          }}
-        >
-          <div style={{ animation: "glitchFade 3s ease-in-out infinite", animationDelay: "0s" }}>
-            INTEGRATED SATELLITE ARRAY
-          </div>
-          <div style={{ animation: "glitchFade 3s ease-in-out infinite", animationDelay: "0.5s" }}>
-            AUTOMATED ANOMALY DETECTION
-          </div>
-          <div style={{ animation: "glitchFade 3s ease-in-out infinite", animationDelay: "1s" }}>
-            MULTI-SENSOR FUSION
+          <div className="flex flex-1 flex-col gap-3">
+            <Timeline progress={timelineProgress} onSeek={handleSeek} />
+            <div className="flex items-center gap-3">
+              <span className="text-[0.55rem] uppercase tracking-[0.3em] text-white/40">
+                Speed
+              </span>
+              <div className="flex items-center gap-2">
+                {[1, 2, 5].map((value) => (
+                  <SpeedButton
+                    key={value}
+                    value={value}
+                    active={simSpeed === value}
+                    onClick={onSimSpeedChange}
+                  />
+                ))}
+              </div>
+            </div>
           </div>
         </div>
-      )}
 
-      <SeverityLegend />
-      <CitySelector activeCity={activeCity} onSelect={onSelectCity} />
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <ScenarioButton label="Inject Risk" onClick={onSimTriggerCollision} tone="warning" />
+          <ScenarioButton label="Add Satellite" onClick={onSimAddSatellite} />
+          <ScenarioButton label="Reset" onClick={handleReset} />
+        </div>
+      </div>
     </div>
   );
 }
