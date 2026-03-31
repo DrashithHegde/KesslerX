@@ -140,7 +140,7 @@ export default function OrbitPath({
               opacity={opacity * 0.8}
               linewidth={2}
               depthWrite={false}
-              depthTest={false}
+              depthTest={true}
               toneMapped={false}
               blending={THREE.AdditiveBlending}
             />
@@ -152,7 +152,7 @@ export default function OrbitPath({
               opacity={opacity * 0.35}
               linewidth={3}
               depthWrite={false}
-              depthTest={false}
+              depthTest={true}
               toneMapped={false}
               blending={THREE.AdditiveBlending}
             />
@@ -192,7 +192,7 @@ export default function OrbitPath({
               dashSize={0.05}
               gapSize={0.035}
               depthWrite={false}
-              depthTest={false}
+              depthTest={true}
               toneMapped={false}
               blending={THREE.AdditiveBlending}
             />
@@ -210,7 +210,7 @@ export default function OrbitPath({
               dashSize={0.05}
               gapSize={0.035}
               depthWrite={false}
-              depthTest={false}
+              depthTest={true}
               toneMapped={false}
               blending={THREE.AdditiveBlending}
             />

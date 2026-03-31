@@ -37,6 +37,10 @@ yarn-error.log*
 pnpm-debug.log*
 *.log
 
+# ── Agent / local tooling (not for repo) ─────────────────────
+.agents/
+.antigravity/
+
 # ── Misc ──────────────────────────────────────────────────────
 *.zip
 *.tar.gz

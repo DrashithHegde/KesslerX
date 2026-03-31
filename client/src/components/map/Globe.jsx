@@ -105,6 +105,7 @@ function CRTEarth() {
       uChromaticAberration: { value: 0.3 },   // Very subtle color fringing
       uVignetteStrength: { value: 0.4 },      // Gentle edge darkening
       uBrightness: { value: 1.25 },           // Vibrant
+      uOpacity: { value: 0.85 },              // Reduced opacity so orbits behind the globe are visible
     }),
     [texture]
   );
@@ -128,6 +129,7 @@ function CRTEarth() {
           vertexShader={CRTEarthVertexShader}
           fragmentShader={CRTEarthFragmentShader}
           uniforms={uniforms}
+          transparent={true}
         />
       </Sphere>
 
@@ -272,6 +274,7 @@ function SatelliteSwarm({
   const meshRef = useRef();
   const hitboxRef = useRef();
   const satPositionsRef = useRef([]);
+  const pointerDownPos = useRef({ x: 0, y: 0 });
   const [satData, setSatData] = useState([]);
   const overlayUpdateRef = useRef(0);
   const tmpWorldPos = useMemo(() => new THREE.Vector3(), []);
@@ -474,8 +477,18 @@ function SatelliteSwarm({
     [camera]
   );
 
+  const handlePointerDown = (e) => {
+    pointerDownPos.current = { x: e.clientX, y: e.clientY };
+  };
+
   const handleClick = (e) => {
     e.stopPropagation();
+
+    // Ignore drags — only select if pointer barely moved
+    const dx = e.clientX - pointerDownPos.current.x;
+    const dy = e.clientY - pointerDownPos.current.y;
+    if (dx * dx + dy * dy > 25) return; // 5px threshold
+
     const instanceId = e.instanceId;
     if (instanceId === undefined || instanceId >= filteredSatData.length) {
       return;
@@ -506,6 +519,7 @@ function SatelliteSwarm({
       <instancedMesh
         ref={hitboxRef}
         args={[null, null, filteredSatData.length]}
+        onPointerDown={handlePointerDown}
         onClick={handleClick}
       >
         <sphereGeometry args={[BASE_SATELLITE_RADIUS, 8, 8]} />
