@@ -1,4 +1,11 @@
 {
+  "name": "kesslerx-workspace",
+  "private": true,
+  "scripts": {
+    "client:dev": "npm --prefix client run dev",
+    "client:build": "npm --prefix client run build",
+    "server:dev": "python server/run.py"
+  },
   "dependencies": {
     "react-globe.gl": "^2.37.0",
     "three": "^0.183.2"

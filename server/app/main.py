@@ -7,7 +7,7 @@ from app.core.config import get_settings
 settings = get_settings()
 
 app = FastAPI(
-    title="GeoSense API",
+    title="KesslerX API",
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -15,10 +15,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.parsed_cors_origins or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(api_router, prefix="/api", tags=["GeoSense"])
+app.include_router(api_router, prefix="/api", tags=["KesslerX"])

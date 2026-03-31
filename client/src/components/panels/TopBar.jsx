@@ -1,12 +1,18 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// TopBar
-// Floating header with GeoSense logo (left) and live REC / coords (right)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export default function TopBar({ activeLayers, recTime, coords }) {
-  const primaryLayer =
-    Object.entries(activeLayers).find(([, v]) => v)?.[0]?.toUpperCase() || "—";
-  const activeLayerLabel = primaryLayer === "AQI" ? "CRT" : primaryLayer;
+export default function TopBar({
+  recTime,
+  datasetStats,
+  selectedTarget,
+  analysisSnapshot,
+}) {
+  const selectedLabel = selectedTarget?.details?.OBJECT_NAME || "NO TARGET LOCK";
+  const riskLabel = analysisSnapshot?.riskBand || "STANDBY";
+  const riskColor = analysisSnapshot?.riskColor || "rgba(0,229,255,0.55)";
+  const datasetLabel =
+    datasetStats.status === "error"
+      ? "DATA LINK DEGRADED"
+      : datasetStats.cached
+        ? "TRACKED OBJECT CACHE"
+        : "LIVE TRACKED FEED";
 
   return (
     <div
@@ -23,10 +29,8 @@ export default function TopBar({ activeLayers, recTime, coords }) {
         pointerEvents: "none",
       }}
     >
-      {/* ── Logo ─────────────────────────────────────────────────────────── */}
       <div className="slide-in-left-flat-top" style={{ pointerEvents: "all" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          {/* Wordmark only — no icon */}
           <div>
             <div
               style={{
@@ -50,12 +54,11 @@ export default function TopBar({ activeLayers, recTime, coords }) {
                 marginTop: 2,
               }}
             >
-              Environmental Intelligence
+              Orbital Risk Intelligence
             </div>
           </div>
         </div>
 
-        {/* Classification tag */}
         <div
           style={{
             marginTop: 6,
@@ -64,16 +67,14 @@ export default function TopBar({ activeLayers, recTime, coords }) {
             color: "rgba(217,127,42,0.7)",
           }}
         >
-          ENV-SIG // REAL-TIME // CLASSIFIED
+          CONJUNCTION SCREENING // TRACKED SPACE OBJECTS
         </div>
       </div>
 
-      {/* ── Right — REC badge + telemetry ────────────────────────────────── */}
       <div
         className="slide-in-right"
         style={{ textAlign: "right", pointerEvents: "none" }}
       >
-        {/* REC badge */}
         <div
           style={{
             display: "flex",
@@ -100,8 +101,8 @@ export default function TopBar({ activeLayers, recTime, coords }) {
           </span>
         </div>
 
-        {/* Coordinates */}
-        <div className="coords-typewriter"
+        <div
+          className="coords-typewriter"
           style={{
             marginTop: 4,
             fontSize: "0.56rem",
@@ -110,10 +111,9 @@ export default function TopBar({ activeLayers, recTime, coords }) {
             fontFamily: "'DM Mono', monospace",
           }}
         >
-          LAT: {coords.lat}° N · LNG: {coords.lng}° E
+          {datasetLabel} // TRACKED {datasetStats.totalTracked}
         </div>
 
-        {/* Active layer label */}
         <div
           style={{
             marginTop: 2,
@@ -122,7 +122,29 @@ export default function TopBar({ activeLayers, recTime, coords }) {
             color: "rgba(200,214,229,0.28)",
           }}
         >
-          ACTIVE LAYER: <span style={{ color: "rgba(0,229,255,0.55)" }}>{activeLayerLabel}</span>
+          TARGET:{" "}
+          <span style={{ color: "rgba(200,214,229,0.7)" }}>{selectedLabel}</span>
+        </div>
+        <div
+          style={{
+            marginTop: 2,
+            fontSize: "0.48rem",
+            letterSpacing: "0.2em",
+            color: "rgba(200,214,229,0.28)",
+          }}
+        >
+          ACTIVE LAYER:{" "}
+          <span style={{ color: "rgba(0,229,255,0.78)" }}>CRT</span>
+        </div>
+        <div
+          style={{
+            marginTop: 2,
+            fontSize: "0.5rem",
+            letterSpacing: "0.2em",
+            color: "rgba(200,214,229,0.28)",
+          }}
+        >
+          RISK SCREEN: <span style={{ color: riskColor }}>{riskLabel}</span>
         </div>
       </div>
     </div>

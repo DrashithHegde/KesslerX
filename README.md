@@ -1,123 +1,128 @@
 # KesslerX
 
-### Modeling Orbital Risk and Preventing Kessler Syndrome
+KesslerX is a space surveillance and orbital risk intelligence system focused on collision risk under uncertainty.
 
----
+Instead of claiming exact collision prediction, the project screens tracked-object behavior, estimates debris-heavy operating conditions, and presents explainable operator guidance to help prevent cascading failures associated with Kessler syndrome.
 
-## Problem
+## What the current repo does
 
-The increasing number of satellites and debris in Earth’s orbit is pushing space toward a critical tipping point known as the Kessler Syndrome—a chain reaction where collisions generate more debris, leading to cascading failures.
+- Renders a real-time 3D globe with tracked satellites, rocket bodies, and debris
+- Fetches recent LEO GP objects from Space-Track through a FastAPI backend
+- Propagates TLEs in the frontend to animate object motion and orbit tracks
+- Screens a selected target against nearby tracked objects across a sampled 90-minute window
+- Produces a heuristic uncertainty score based on nearby debris density
+- Opens a deep-analysis overlay with a risk summary, screened closest approach, and mitigation guidance
+- Includes a simulation-control surface for demo playback and scenario interactions
 
-Current systems:
+## Repo layout
 
-* Track only known objects
-* Ignore untracked debris
-* Lack tools to model uncertainty and cascading risk
-
----
-
-## Solution
-
-KesslerX is an orbital risk intelligence system designed to model and visualize conditions that could lead to Kessler Syndrome.
-
-It:
-
-* Simulates satellite motion using real orbital data
-* Models uncertainty zones for untracked debris
-* Detects potential high-risk interactions
-* Demonstrates how cascading risks can emerge
-* Provides mitigation strategies
-* Explains decisions using an AI-based analysis layer
-
----
-
-## Key Idea
-
-Instead of predicting exact collisions, KesslerX models risk under uncertainty to better understand and prevent cascade scenarios.
-
----
-
-## Features
-
-* Satellite orbit simulation
-* Uncertainty zone modeling (debris risk)
-* Risk detection (close approach, high-risk zones)
-* Scenario injection for controlled demonstrations
-* Mitigation suggestions
-* Deep Analysis (AI-based explanation)
-
----
+```text
+KesslerX/
+|-- client/
+|   |-- src/
+|   |   |-- components/
+|   |   |   |-- hud/
+|   |   |   |-- map/
+|   |   |   |-- panels/
+|   |   |   `-- ui/
+|   |   |-- constants/
+|   |   |-- hooks/
+|   |   |-- styles/
+|   |   `-- utils/
+|   |-- .env.example
+|   |-- package.json
+|   `-- vite.config.js
+|-- server/
+|   |-- app/
+|   |   |-- api/
+|   |   |-- core/
+|   |   `-- main.py
+|   |-- .env.example
+|   |-- requirements.txt
+|   |-- run.py
+|   `-- tle_cache.json
+|-- README.md
+`-- package.json
+```
 
 ## Architecture
 
 ```text
-Frontend (React + Three.js)
-        ↓
-Simulation Engine
-        ↓
-Risk Detection
-        ↓
-Uncertainty Modeling
-        ↓
-AI Explanation (RAG)
+React + Three.js globe
+        |
+        v
+Tracked-object selection + orbit propagation
+        |
+        v
+Sampled conjunction screening
+        |
+        v
+Debris-density uncertainty heuristic
+        |
+        v
+Deep analysis briefing + mitigation suggestions
 ```
 
----
+## Run locally
 
-## Tech Stack
+### Backend
 
-| Layer      | Technology                     |
-| ---------- | ------------------------------ |
-| Frontend   | React (Vite), Three.js         |
-| Backend    | FastAPI (Python)               |
-| AI Layer   | RAG (LLM-based explanation)    |
-| Data       | TLE Satellite Data (CelesTrak) |
-| State Mgmt | Zustand / Context API          |
-| Styling    | Tailwind CSS (optional)        |
+```powershell
+cd server
+.venv\Scripts\python.exe run.py
+```
 
----
+If you do not have `server/.venv` yet:
 
-## Data Approach
+```powershell
+cd server
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+python run.py
+```
 
-Due to incomplete debris tracking:
+### Frontend
 
-* Risk is approximated using:
+```powershell
+cd client
+npm run dev
+```
 
-  * orbital altitude
-  * satellite density
-  * predefined high-risk regions
+The frontend uses `/api` by default and Vite proxies that to `http://127.0.0.1:8000` in development.
 
-This reflects real-world conditions where uncertainty is unavoidable.
+## Important env vars
 
----
+### Frontend
 
-## Demo Flow
+`client/.env.example`
 
-1. Satellites orbit Earth
-2. A risk scenario is injected
-3. The system detects potential danger
-4. Risk zones and alerts are displayed
-5. Deep Analysis explains how the situation could contribute to a cascade event
+```env
+VITE_API_BASE_URL=/api
+VITE_DEV_API_TARGET=http://127.0.0.1:8000
+```
 
----
+### Backend
 
-## Impact
+`server/.env.example`
 
-* Helps understand and visualize Kessler Syndrome risk
-* Improves space situational awareness
-* Supports decision-making under uncertainty
+```env
+API_HOST=127.0.0.1
+API_PORT=8000
+SPACETRACK_USER=
+SPACETRACK_PASS=
+```
 
----
+## Current implementation notes
 
-## Team
+- The tracked-object feed is live and backed by Space-Track caching.
+- The current deep-analysis layer is heuristic and operator-facing.
+- The repo is structured to support future upgrades such as:
+  - higher-fidelity risk engines with exact TCA workflows
+  - ML-based uncertainty models
+  - retrieval-backed explanation services
 
-* Abhinav Ranade
-* Aryan Mahabale
-* Avanish Darade
-* Drashith Hegde
+## One-line summary
 
----
-
-## Note
-
-KesslerX focuses on understanding and preventing cascading orbital failures, not exact real-world prediction.
+KesslerX screens orbital risk under uncertainty and explains it clearly enough to support safer decisions before cascading collisions occur.

@@ -1,29 +1,27 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { formatUTCTime } from "../utils/helpers";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// useClock
-// Returns a live UTC timestamp string, updated every second
-// ─────────────────────────────────────────────────────────────────────────────
+function formatUtcTime(date = new Date()) {
+  const part = (value) => String(value).padStart(2, "0");
+  return (
+    `${date.getUTCFullYear()}-${part(date.getUTCMonth() + 1)}-${part(date.getUTCDate())} ` +
+    `${part(date.getUTCHours())}:${part(date.getUTCMinutes())}:${part(date.getUTCSeconds())}Z`
+  );
+}
+
 export function useClock() {
-  const [time, setTime] = useState(formatUTCTime());
+  const [time, setTime] = useState(formatUtcTime());
 
   useEffect(() => {
-    const id = setInterval(() => setTime(formatUTCTime()), 1000);
+    const id = setInterval(() => setTime(formatUtcTime()), 1000);
     return () => clearInterval(id);
   }, []);
 
   return time;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// useToast
-// Manages a timed notification toast
-// Returns: { message, phase, show }
-// ─────────────────────────────────────────────────────────────────────────────
 export function useToast(duration = 1500) {
   const [message, setMessage] = useState(null);
-  const [phase, setPhase] = useState("in"); // "in" | "out"
+  const [phase, setPhase] = useState("in");
   const timerRef = useRef(null);
 
   const show = useCallback((msg) => {
@@ -37,28 +35,29 @@ export function useToast(duration = 1500) {
     }, duration);
   }, [duration]);
 
-  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   return { message, phase, show };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// useIntro
-// Manages the three-phase intro animation: "in" → "out" → "done"
-// ─────────────────────────────────────────────────────────────────────────────
 export function useIntro() {
   const [phase, setPhase] = useState("in");
-  const [panelsVisible, setPanelsVisible] = useState(false);
 
   useEffect(() => {
     const t1 = setTimeout(() => setPhase("out"), 2200);
     const t2 = setTimeout(() => {
       setPhase("done");
-      setPanelsVisible(true);
     }, 3100);
 
-    return () => { clearTimeout(t1); clearTimeout(t2); };
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, []);
 
-  return { phase, panelsVisible };
+  return { phase };
 }

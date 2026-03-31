@@ -1,36 +1,71 @@
 import { useEffect, useRef, useState } from "react";
 
-const TIMELINE_DURATION_MS = 20000; // baseline sweep length
+const TIMELINE_DURATION_MS = 20000;
 
 function formatSimTime(progress) {
-  const totalSeconds = Math.round(progress * 3600); // pretend 60-minute range
+  const totalSeconds = Math.round(progress * 3600);
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
 }
 
 function SpeedButton({ value, active, onClick }) {
-  const base =
-    "px-3 py-1 text-[0.65rem] tracking-[0.2em] uppercase rounded-md border transition-all duration-200";
-  const state = active
-    ? "border-[#00D1FF]/80 text-[#00D1FF] shadow-[0_0_12px_rgba(0,209,255,0.4)] bg-[#00D1FF]/10"
-    : "border-white/10 text-white/60 hover:border-[#00D1FF]/50";
   return (
-    <button type="button" onClick={() => onClick(value)} className={`${base} ${state}`}>
+    <button
+      type="button"
+      onClick={() => onClick(value)}
+      style={{
+        padding: "4px 12px",
+        fontSize: "0.65rem",
+        letterSpacing: "0.2em",
+        textTransform: "uppercase",
+        borderRadius: 6,
+        border: active
+          ? "1px solid rgba(0,209,255,0.8)"
+          : "1px solid rgba(255,255,255,0.12)",
+        color: active ? "#00D1FF" : "rgba(255,255,255,0.6)",
+        background: active ? "rgba(0,209,255,0.1)" : "transparent",
+        boxShadow: active ? "0 0 12px rgba(0,209,255,0.4)" : "none",
+        transition: "all 0.2s ease",
+        cursor: "pointer",
+      }}
+    >
       {value}x
     </button>
   );
 }
 
-function ScenarioButton({ label, onClick, tone = "default" }) {
-  const base =
-    "flex-1 min-w-[120px] px-3 py-2 text-[0.58rem] tracking-[0.2em] uppercase rounded-lg border transition-all duration-200";
-  const state =
-    tone === "warning"
-      ? "border-[#FF8C42]/70 text-[#FF8C42] bg-[#FF8C42]/10 hover:bg-[#FF8C42]/20 shadow-[0_0_14px_rgba(255,140,66,0.35)]"
-      : "border-white/10 text-white/70 hover:border-[#00D1FF]/50 hover:text-[#00D1FF]";
+function ScenarioButton({ label, onClick, tone = "default", disabled = false }) {
   return (
-    <button type="button" onClick={onClick} className={`${base} ${state}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        flex: 1,
+        minWidth: 120,
+        padding: "8px 12px",
+        fontSize: "0.58rem",
+        letterSpacing: "0.2em",
+        textTransform: "uppercase",
+        borderRadius: 8,
+        border:
+          tone === "warning"
+            ? "1px solid rgba(255,140,66,0.7)"
+            : "1px solid rgba(255,255,255,0.12)",
+        color: disabled
+          ? "rgba(255,255,255,0.3)"
+          : tone === "warning"
+            ? "#FF8C42"
+            : "rgba(255,255,255,0.7)",
+        background: tone === "warning" ? "rgba(255,140,66,0.1)" : "transparent",
+        boxShadow:
+          tone === "warning" && !disabled ? "0 0 14px rgba(255,140,66,0.35)" : "none",
+        transition: "all 0.2s ease",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.65 : 1,
+      }}
+    >
       {label}
     </button>
   );
@@ -47,23 +82,57 @@ function Timeline({ progress, onSeek }) {
   };
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between text-[0.55rem] uppercase tracking-[0.3em] text-white/50">
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontSize: "0.55rem",
+          textTransform: "uppercase",
+          letterSpacing: "0.3em",
+          color: "rgba(255,255,255,0.5)",
+        }}
+      >
         <span>Timeline</span>
-        <span>Δ {formatSimTime(progress)}</span>
+        <span>Delta {formatSimTime(progress)}</span>
       </div>
       <div
         ref={trackRef}
         onClick={handleClick}
-        className="relative h-2 rounded-full bg-white/10 cursor-pointer"
+        style={{
+          position: "relative",
+          height: 8,
+          borderRadius: 999,
+          background: "rgba(255,255,255,0.1)",
+          cursor: "pointer",
+        }}
       >
         <div
-          className="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-[#00D1FF]/70 to-[#00D1FF]/30"
-          style={{ width: `${progress * 100}%` }}
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            height: "100%",
+            borderRadius: 999,
+            background:
+              "linear-gradient(to right, rgba(0,209,255,0.7), rgba(0,209,255,0.3))",
+            width: `${progress * 100}%`,
+          }}
         />
         <div
-          className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border border-[#00D1FF] bg-[#0B0F14] shadow-[0_0_12px_rgba(0,209,255,0.6)]"
-          style={{ left: `calc(${progress * 100}% - 8px)` }}
+          style={{
+            position: "absolute",
+            top: "50%",
+            transform: "translateY(-50%)",
+            width: 16,
+            height: 16,
+            borderRadius: "50%",
+            border: "1px solid #00D1FF",
+            background: "#0B0F14",
+            boxShadow: "0 0 12px rgba(0,209,255,0.6)",
+            left: `calc(${progress * 100}% - 8px)`,
+          }}
         />
       </div>
     </div>
@@ -79,6 +148,8 @@ export default function BottomBar({
   onSimAddSatellite,
   onSimTriggerCollision,
   onSimReset,
+  onOpenAnalysis,
+  analysisAvailable,
 }) {
   const [timelineProgress, setTimelineProgress] = useState(0);
   const rafRef = useRef(null);
@@ -140,33 +211,85 @@ export default function BottomBar({
   };
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center pb-6">
-      <div className="pointer-events-auto w-[520px] max-w-[92vw] rounded-2xl border border-white/10 bg-[#0B0F14]/90 px-6 py-4 shadow-[0_8px_40px_rgba(0,0,0,0.65)] backdrop-blur-2xl">
-        <div className="flex items-center justify-between text-[0.6rem] uppercase tracking-[0.4em] text-white/60">
+    <div
+      style={{
+        pointerEvents: "none",
+        position: "fixed",
+        insetInline: 0,
+        bottom: 0,
+        zIndex: 30,
+        display: "flex",
+        justifyContent: "center",
+        paddingBottom: 24,
+      }}
+    >
+      <div
+        style={{
+          pointerEvents: "auto",
+          width: "560px",
+          maxWidth: "92vw",
+          borderRadius: 16,
+          border: "1px solid rgba(255,255,255,0.1)",
+          background: "rgba(11,15,20,0.9)",
+          padding: "16px 24px",
+          boxShadow: "0 8px 40px rgba(0,0,0,0.65)",
+          backdropFilter: "blur(24px)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: "0.6rem",
+            textTransform: "uppercase",
+            letterSpacing: "0.4em",
+            color: "rgba(255,255,255,0.6)",
+          }}
+        >
           <span>Simulation Control</span>
-          <span className="text-[#00D1FF]">T+ {formatSimTime(timelineProgress)}</span>
+          <span style={{ color: "#00D1FF" }}>T+ {formatSimTime(timelineProgress)}</span>
         </div>
 
-        <div className="mt-3 flex items-center gap-4">
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 16 }}>
           <button
             type="button"
             onClick={handlePlayPause}
-            className={`h-12 w-12 rounded-full border transition-all duration-200 shadow-[0_0_18px_rgba(0,209,255,0.35)] flex items-center justify-center text-lg ${
-              simRunning
-                ? "border-[#FF8C42]/60 text-[#FF8C42] bg-[#FF8C42]/10"
-                : "border-[#00D1FF]/70 text-[#00D1FF] bg-[#00D1FF]/10"
-            }`}
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: "50%",
+              border: simRunning
+                ? "1px solid rgba(255,140,66,0.6)"
+                : "1px solid rgba(0,209,255,0.7)",
+              color: simRunning ? "#FF8C42" : "#00D1FF",
+              background: simRunning ? "rgba(255,140,66,0.1)" : "rgba(0,209,255,0.1)",
+              boxShadow: "0 0 18px rgba(0,209,255,0.35)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "1rem",
+              transition: "all 0.2s ease",
+              cursor: "pointer",
+            }}
           >
-            {simRunning ? "❚❚" : "▶"}
+            {simRunning ? "||" : ">"}
           </button>
 
-          <div className="flex flex-1 flex-col gap-3">
+          <div style={{ display: "flex", flex: 1, flexDirection: "column", gap: 12 }}>
             <Timeline progress={timelineProgress} onSeek={handleSeek} />
-            <div className="flex items-center gap-3">
-              <span className="text-[0.55rem] uppercase tracking-[0.3em] text-white/40">
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span
+                style={{
+                  fontSize: "0.55rem",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.3em",
+                  color: "rgba(255,255,255,0.4)",
+                }}
+              >
                 Speed
               </span>
-              <div className="flex items-center gap-2">
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {[1, 2, 5].map((value) => (
                   <SpeedButton
                     key={value}
@@ -180,9 +303,21 @@ export default function BottomBar({
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div
+          style={{
+            marginTop: 16,
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+          }}
+        >
           <ScenarioButton label="Inject Risk" onClick={onSimTriggerCollision} tone="warning" />
           <ScenarioButton label="Add Satellite" onClick={onSimAddSatellite} />
+          <ScenarioButton
+            label="Open Analysis"
+            onClick={onOpenAnalysis}
+            disabled={!analysisAvailable}
+          />
           <ScenarioButton label="Reset" onClick={handleReset} />
         </div>
       </div>

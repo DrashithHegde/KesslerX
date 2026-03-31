@@ -1,33 +1,36 @@
-import { useRef, useState, useEffect, useMemo, useCallback } from "react";
-import { Canvas, useFrame, useThree, useLoader } from "@react-three/fiber";
-import { OrbitControls, Stars, Sphere, Html } from "@react-three/drei";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
+import { Html, OrbitControls, Sphere, Stars } from "@react-three/drei";
 import * as THREE from "three";
-import { gstime, propagate } from "satellite.js/dist/propagation.js";
 import { twoline2satrec } from "satellite.js/dist/io.js";
-import { eciToGeodetic } from "satellite.js/dist/transforms.js";
 import OrbitPath from "./OrbitPath";
+import {
+  buildDatasetStats,
+  buildTargetAnalysis,
+  getObjectTypeColor,
+  getPropagationSnapshot,
+} from "../../utils/orbitalAnalysis";
 import {
   CRTEarthVertexShader,
   CRTEarthFragmentShader,
 } from "./CRTEarthShader";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
 const EARTH_TEXTURE_URL =
   "https://unpkg.com/three-globe@2.41.12/example/img/earth-blue-marble.jpg";
 const EARTH_RADIUS = 1;
-const EARTH_POLAR_SCALE = 0.92; // Stylized flattening to mimic the CRT reference silhouette
-const MARKER_HUD_COLOR = "#d2882e"; // Slightly darker, desaturated orange for PAYLOAD markers
-const BASE_SATELLITE_RADIUS = 0.005; // Geometry radius for instanced dots
-const NON_PAYLOAD_HIT_PIXEL_DIAMETER = 34; // Desired on-screen diameter (px) for non-payload hit areas
-const NON_PAYLOAD_HIT_SCALE_MIN = 1; // Prevents collapsing when zoomed in
-const NON_PAYLOAD_HIT_SCALE_MAX = 22; // Avoids runaway scales when zoomed far out
-const EARTH_OCCLUSION_RADIUS = EARTH_RADIUS * 1.01; // Slightly above Earth's surface for occlusion tests
+const EARTH_POLAR_SCALE = 0.92;
+const EARTH_STAR_OCCLUDER_RADIUS = EARTH_RADIUS - 0.003;
+const MARKER_HUD_COLOR = "#d2882e";
+const BASE_SATELLITE_RADIUS = 0.005;
+const SELECTED_MARKER_RADIUS = 0.022;
+const SELECTION_HALO_INNER_RADIUS = 0.05;
+const SELECTION_HALO_OUTER_RADIUS = 0.068;
+const NON_PAYLOAD_HIT_PIXEL_DIAMETER = 34;
+const NON_PAYLOAD_HIT_SCALE_MIN = 1;
+const NON_PAYLOAD_HIT_SCALE_MAX = 22;
+const EARTH_OCCLUSION_RADIUS = EARTH_RADIUS * 1.01;
+const SELECTED_MARKER_OCCLUSION_PADDING = SELECTED_MARKER_RADIUS;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Marker sprite (used for DOM overlay)
-// ─────────────────────────────────────────────────────────────────────────────
 function createPayloadMarkerSprite() {
   if (typeof document === "undefined") return null;
 
@@ -48,19 +51,12 @@ function createPayloadMarkerSprite() {
   const insetX = 4;
   const insetY = 3;
 
-  // Top-left corner
   ctx.fillRect(insetX, insetY, cornerLenH, thickness);
   ctx.fillRect(insetX, insetY, thickness, cornerLenV);
-
-  // Top-right corner
   ctx.fillRect(width - insetX - cornerLenH, insetY, cornerLenH, thickness);
   ctx.fillRect(width - insetX - thickness, insetY, thickness, cornerLenV);
-
-  // Bottom-left corner
   ctx.fillRect(insetX, height - insetY - thickness, cornerLenH, thickness);
   ctx.fillRect(insetX, height - insetY - cornerLenV, thickness, cornerLenV);
-
-  // Bottom-right corner
   ctx.fillRect(
     width - insetX - cornerLenH,
     height - insetY - thickness,
@@ -77,44 +73,77 @@ function createPayloadMarkerSprite() {
   return canvas.toDataURL("image/png");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. CRT-styled Earth — vibrant, subtle pixelation/scanlines, no blue glow
-// ─────────────────────────────────────────────────────────────────────────────
+function normalizeObjectType(rawType) {
+  if (rawType === "PAYLOAD") return "PAYLOAD";
+  if (rawType === "ROCKET BODY") return "ROCKET BODY";
+  if (rawType === "DEBRIS") return "DEBRIS";
+  return "OTHER";
+}
+
+function isOccludedByEarth(cameraPosition, targetPosition, padding = 0) {
+  if (!cameraPosition || !targetPosition) return false;
+
+  const radiusXZ = EARTH_OCCLUSION_RADIUS + padding;
+  const radiusY = radiusXZ * EARTH_POLAR_SCALE;
+  const invRadiusXZSq = 1 / (radiusXZ * radiusXZ);
+  const invRadiusYSq = 1 / (radiusY * radiusY);
+
+  const dx = targetPosition.x - cameraPosition.x;
+  const dy = targetPosition.y - cameraPosition.y;
+  const dz = targetPosition.z - cameraPosition.z;
+
+  const a = (dx * dx + dz * dz) * invRadiusXZSq + dy * dy * invRadiusYSq;
+  if (a <= 0) return false;
+
+  const b =
+    2 *
+    ((cameraPosition.x * dx + cameraPosition.z * dz) * invRadiusXZSq +
+      cameraPosition.y * dy * invRadiusYSq);
+  const c =
+    (cameraPosition.x * cameraPosition.x +
+      cameraPosition.z * cameraPosition.z) *
+      invRadiusXZSq +
+    cameraPosition.y * cameraPosition.y * invRadiusYSq -
+    1;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return false;
+
+  const sqrtDisc = Math.sqrt(discriminant);
+  const t1 = (-b - sqrtDisc) / (2 * a);
+  const t2 = (-b + sqrtDisc) / (2 * a);
+  const tMin = Math.min(t1, t2);
+  const tMax = Math.max(t1, t2);
+  return (tMin >= 0 && tMin <= 1) || (tMax >= 0 && tMax <= 1);
+}
+
 function CRTEarth() {
   const earthRef = useRef();
   const materialRef = useRef();
-
   const texture = useLoader(THREE.TextureLoader, EARTH_TEXTURE_URL);
 
   useEffect(() => {
-    if (texture) {
-      // LinearFilter for smooth base — shader handles the subtle CRT pixelation
-      texture.minFilter = THREE.LinearFilter;
-      texture.magFilter = THREE.LinearFilter;
-      texture.generateMipmaps = true;
-    }
+    if (!texture) return;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = true;
   }, [texture]);
 
   const uniforms = useMemo(
     () => ({
       uTexture: { value: texture },
       uTime: { value: 0 },
-      uPixelation: { value: 800.0 },         // Very fine — near HD, just a hint of pixel grid
-      uScanlineIntensity: { value: 0.02 },    // Barely visible scanlines
-      uGrainIntensity: { value: 0.012 },      // Near-invisible grain
-      uChromaticAberration: { value: 0.3 },   // Very subtle color fringing
-      uVignetteStrength: { value: 0.4 },      // Gentle edge darkening
-      uBrightness: { value: 1.25 },           // Vibrant
-      uOpacity: { value: 0.85 },              // Reduced opacity so orbits behind the globe are visible
+      uPixelation: { value: 800.0 },
+      uScanlineIntensity: { value: 0.02 },
+      uGrainIntensity: { value: 0.012 },
+      uChromaticAberration: { value: 0.3 },
+      uVignetteStrength: { value: 0.4 },
+      uBrightness: { value: 1.25 },
+      uOpacity: { value: 0.85 },
     }),
     [texture]
   );
 
   useFrame((_, delta) => {
-    if (earthRef.current) {
-      // disabled: keep Earth as the main static view
-      // earthRef.current.rotation.y += 0.0001;
-    }
     if (materialRef.current) {
       materialRef.current.uniforms.uTime.value += delta;
     }
@@ -122,23 +151,25 @@ function CRTEarth() {
 
   return (
     <group ref={earthRef} scale={[1, EARTH_POLAR_SCALE, 1]}>
-      {/* Main CRT Earth */}
+      <Sphere args={[EARTH_STAR_OCCLUDER_RADIUS, 64, 64]}>
+        <meshBasicMaterial colorWrite={false} depthWrite />
+      </Sphere>
+
       <Sphere args={[EARTH_RADIUS, 64, 64]}>
         <shaderMaterial
           ref={materialRef}
           vertexShader={CRTEarthVertexShader}
           fragmentShader={CRTEarthFragmentShader}
           uniforms={uniforms}
-          transparent={true}
+          transparent
         />
       </Sphere>
 
-      {/* Very faint wireframe overlay for subtle grid feel */}
       <Sphere args={[EARTH_RADIUS + 0.001, 48, 48]}>
         <meshBasicMaterial
           color="#88ccdd"
-          wireframe={true}
-          transparent={true}
+          wireframe
+          transparent
           opacity={0.018}
         />
       </Sphere>
@@ -146,127 +177,9 @@ function CRTEarth() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. Decorative orbit ring (like the red/dashed ring in the screenshots)
-// ─────────────────────────────────────────────────────────────────────────────
-function OrbitalDecorRing() {
-  const ringRef = useRef();
-  const points = useMemo(() => {
-    const pts = [];
-    const n = 256;
-    const r = EARTH_RADIUS + 0.32;
-    for (let i = 0; i <= n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r));
-    }
-    return pts;
-  }, []);
-
-  const geometry = useMemo(
-    () => new THREE.BufferGeometry().setFromPoints(points),
-    [points]
-  );
-
-  useFrame(() => {
-    if (ringRef.current) {
-      ringRef.current.rotation.x = 0.3;
-      ringRef.current.rotation.z = 0.1;
-    }
-  });
-
-  return (
-    <group ref={ringRef}>
-      <line geometry={geometry}>
-        <lineBasicMaterial
-          color="#c0392b"
-          transparent={true}
-          opacity={0.25}
-          depthWrite={false}
-        />
-      </line>
-    </group>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. Utility: Get satellite 3D position with metadata
-// ─────────────────────────────────────────────────────────────────────────────
-function getSatellitePosition(satrec, date = new Date()) {
-  try {
-    const gmst = gstime(date);
-    const pv = propagate(satrec, date);
-    const posEci = pv.position;
-    if (!posEci) return null;
-    const gd = eciToGeodetic(posEci, gmst);
-    const r = EARTH_RADIUS + gd.height / 6371;
-    const lat = gd.latitude;
-    const lon = gd.longitude;
-    const x = r * Math.cos(lat) * Math.cos(lon);
-    const z = r * Math.cos(lat) * Math.sin(lon);
-    const y = r * Math.sin(lat);
-    return {
-      position: [x, y, -z],
-      height: gd.height,
-      lat: THREE.MathUtils.radToDeg(lat),
-      lon: THREE.MathUtils.radToDeg(lon),
-    };
-  } catch {
-    return null;
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. Camera tracker: surveillance-style – keeps selected sat centered
-// ─────────────────────────────────────────────────────────────────────────────
-function CameraTracker({ selectedSat, controlsRef }) {
-  const { camera } = useThree();
-  const targetPos = useRef(new THREE.Vector3());
-  const hasLockedOn = useRef(false);
-
-  useFrame(() => {
-    if (!selectedSat || !controlsRef.current) {
-      if (hasLockedOn.current) {
-        // Smoothly return to origin when deselected
-        controlsRef.current?.target.lerp(new THREE.Vector3(0, 0, 0), 0.05);
-        controlsRef.current?.update();
-        if (controlsRef.current?.target.length() < 0.01) {
-          hasLockedOn.current = false;
-        }
-      }
-      return;
-    }
-
-    const posData = getSatellitePosition(selectedSat.satrec);
-    if (!posData) return;
-
-    const [sx, sy, sz] = posData.position;
-    targetPos.current.set(sx, sy, sz);
-
-    // Lock orbit controls target onto the satellite
-    const lerpSpeed = hasLockedOn.current ? 0.03 : 0.06;
-    controlsRef.current.target.lerp(targetPos.current, lerpSpeed);
-
-    // On first lock, nudge camera closer
-    if (!hasLockedOn.current) {
-      const dir = new THREE.Vector3(sx, sy, sz).normalize();
-      const camDest = dir.multiplyScalar(2.5);
-      camera.position.lerp(camDest, 0.04);
-      hasLockedOn.current = true;
-    }
-
-    controlsRef.current.update();
-  });
-
-  return null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. Satellite Swarm — instanced dots + PAYLOAD corner-box marker
-// ─────────────────────────────────────────────────────────────────────────────
 function SatelliteSwarm({
+  satData,
   onSelectSatellite,
-  satTypes,
-  selectedSat,
   onPayloadOverlayUpdate,
   onSelectionPing,
 }) {
@@ -275,171 +188,91 @@ function SatelliteSwarm({
   const hitboxRef = useRef();
   const satPositionsRef = useRef([]);
   const pointerDownPos = useRef({ x: 0, y: 0 });
-  const [satData, setSatData] = useState([]);
   const overlayUpdateRef = useRef(0);
   const tmpWorldPos = useMemo(() => new THREE.Vector3(), []);
   const tmpCamPos = useMemo(() => new THREE.Vector3(), []);
-  const tmpDir = useMemo(() => new THREE.Vector3(), []);
   const tmpProjected = useMemo(() => new THREE.Vector3(), []);
-  const tmpClickDir = useMemo(() => new THREE.Vector3(), []);
-
-  // Fetch satellite data from backend
-  useEffect(() => {
-    fetch("http://localhost:8000/api/satellites")
-      .then((res) => res.json())
-      .then((data) => {
-        console.log(
-          `📡 Space-Track Data Status: ${data.status} | Cached: ${data.cached}`
-        );
-        if (data.data) {
-          const records = data.data.map((sat) => {
-            let colorHex = "#888888";
-            if (sat.OBJECT_TYPE === "PAYLOAD") colorHex = "#6395EE";
-            else if (sat.OBJECT_TYPE === "DEBRIS") colorHex = "#b08a6b";
-            else if (sat.OBJECT_TYPE === "ROCKET BODY") colorHex = "#00FF00";
-            return {
-              satrec: twoline2satrec(sat.TLE_LINE1, sat.TLE_LINE2),
-              color: new THREE.Color(colorHex),
-              type: sat.OBJECT_TYPE,
-              details: sat,
-            };
-          });
-          setSatData(records);
-        }
-      })
-      .catch((err) => console.error("Failed to fetch satellites:", err));
-  }, []);
-
-  // Filter by active types
-  const filteredSatData = useMemo(() => {
-    if (!Array.isArray(satTypes)) {
-      return satData;
-    }
-    if (satTypes.length === 0) {
-      return [];
-    }
-    return satData.filter((s) => satTypes.includes(s.type));
-  }, [satData, satTypes]);
 
   useEffect(() => {
-    if (filteredSatData.length === 0 && onPayloadOverlayUpdate) {
-      onPayloadOverlayUpdate([]);
-    }
-  }, [filteredSatData.length, onPayloadOverlayUpdate]);
+    if (!meshRef.current || satData.length === 0) return;
 
-  // Set instance colors
+    satData.forEach((sat, index) => {
+      meshRef.current.setColorAt(index, sat.color);
+    });
+    meshRef.current.instanceColor.needsUpdate = true;
+  }, [satData]);
+
   useEffect(() => {
-    if (meshRef.current && filteredSatData.length > 0) {
-      filteredSatData.forEach((sat, i) => {
-        meshRef.current.setColorAt(i, sat.color);
-      });
-      meshRef.current.instanceColor.needsUpdate = true;
-    }
-  }, [filteredSatData]);
+    if (satData.length !== 0) return;
+    onPayloadOverlayUpdate?.([]);
+  }, [onPayloadOverlayUpdate, satData.length]);
 
-  // Animate positions + collect payload label positions
   useFrame((state) => {
-    if (
-      !meshRef.current ||
-      !hitboxRef.current ||
-      filteredSatData.length === 0
-    )
-      return;
+    if (!meshRef.current || !hitboxRef.current || satData.length === 0) return;
 
     const now = new Date();
-    const gmst = gstime(now);
     const dummy = new THREE.Object3D();
     const overlayPayload = [];
-    const camera = state.camera;
     const viewport = state.size;
-    const camPos = tmpCamPos.copy(camera.position);
-    const tanHalfFov = Math.tan((camera.fov * Math.PI) / 360);
+    const camPos = tmpCamPos.copy(state.camera.position);
+    const tanHalfFov = Math.tan((state.camera.fov * Math.PI) / 360);
 
-    filteredSatData.forEach((sat, i) => {
-      const pv = propagate(sat.satrec, now);
-      const posEci = pv.position;
+    satData.forEach((sat, index) => {
+      const snapshot = getPropagationSnapshot(sat.satrec, now);
+      if (!snapshot) return;
 
-      if (posEci) {
-        const gd = eciToGeodetic(posEci, gmst);
-        const r = EARTH_RADIUS + gd.height / 6371;
-        const lat = gd.latitude;
-        const lon = gd.longitude;
-        const x = r * Math.cos(lat) * Math.cos(lon);
-        const z = r * Math.cos(lat) * Math.sin(lon);
-        const y = r * Math.sin(lat);
+      tmpWorldPos.set(...snapshot.position);
 
-        tmpWorldPos.set(x, y, -z);
+      if (!satPositionsRef.current[index]) {
+        satPositionsRef.current[index] = new THREE.Vector3();
+      }
+      satPositionsRef.current[index].copy(tmpWorldPos);
 
-        if (!satPositionsRef.current[i]) {
-          satPositionsRef.current[i] = new THREE.Vector3();
-        }
-        satPositionsRef.current[i].copy(tmpWorldPos);
+      const occluded = isOccludedByEarth(camPos, tmpWorldPos);
+      const visibleScale = occluded ? 0.000001 : 1;
 
-        dummy.position.copy(tmpWorldPos);
-        dummy.scale.setScalar(1);
-        dummy.updateMatrix();
-        meshRef.current.setMatrixAt(i, dummy.matrix);
+      dummy.position.copy(tmpWorldPos);
+      dummy.scale.setScalar(visibleScale);
+      dummy.updateMatrix();
+      meshRef.current.setMatrixAt(index, dummy.matrix);
 
-        let hitScale = 1;
-        if (sat.type !== "PAYLOAD") {
-          const dist = tmpWorldPos.distanceTo(camPos);
-          const worldDiameter =
-            (NON_PAYLOAD_HIT_PIXEL_DIAMETER * 2 * dist * tanHalfFov) /
-            viewport.height;
-          const desiredRadius = worldDiameter / 2;
-          const scaleFromRadius = desiredRadius / BASE_SATELLITE_RADIUS;
-          hitScale = THREE.MathUtils.clamp(
-            scaleFromRadius,
-            NON_PAYLOAD_HIT_SCALE_MIN,
-            NON_PAYLOAD_HIT_SCALE_MAX
-          );
-        }
+      let hitScale = 1;
+      if (!occluded && sat.type !== "PAYLOAD") {
+        const dist = tmpWorldPos.distanceTo(camPos);
+        const worldDiameter =
+          (NON_PAYLOAD_HIT_PIXEL_DIAMETER * 2 * dist * tanHalfFov) /
+          viewport.height;
+        const desiredRadius = worldDiameter / 2;
+        const scaleFromRadius = desiredRadius / BASE_SATELLITE_RADIUS;
+        hitScale = THREE.MathUtils.clamp(
+          scaleFromRadius,
+          NON_PAYLOAD_HIT_SCALE_MIN,
+          NON_PAYLOAD_HIT_SCALE_MAX
+        );
+      }
 
-        dummy.scale.setScalar(hitScale);
-        dummy.updateMatrix();
-        hitboxRef.current.setMatrixAt(i, dummy.matrix);
+      dummy.scale.setScalar(occluded ? 0.000001 : hitScale);
+      dummy.updateMatrix();
+      hitboxRef.current.setMatrixAt(index, dummy.matrix);
 
-        if (sat.type === "PAYLOAD") {
-          const dir = tmpDir.subVectors(tmpWorldPos, camPos);
-          const a = dir.lengthSq();
-          let occluded = false;
-          if (a > 0.0) {
-            const b = 2 * camPos.dot(dir);
-            const c =
-              camPos.lengthSq() - EARTH_OCCLUSION_RADIUS * EARTH_OCCLUSION_RADIUS;
-            const discriminant = b * b - 4 * a * c;
-            if (discriminant >= 0) {
-              const sqrtDisc = Math.sqrt(discriminant);
-              const t1 = (-b - sqrtDisc) / (2 * a);
-              const t2 = (-b + sqrtDisc) / (2 * a);
-              const tMin = Math.min(t1, t2);
-              const tMax = Math.max(t1, t2);
-              if ((tMin >= 0 && tMin <= 1) || (tMax >= 0 && tMax <= 1)) {
-                occluded = true;
-              }
-            }
+      if (sat.type === "PAYLOAD" && !occluded) {
+          tmpProjected.copy(tmpWorldPos).project(state.camera);
+          const screenX = (tmpProjected.x * 0.5 + 0.5) * viewport.width;
+          const screenY = (-tmpProjected.y * 0.5 + 0.5) * viewport.height;
+          if (
+            screenX >= 0 &&
+            screenX <= viewport.width &&
+            screenY >= 0 &&
+            screenY <= viewport.height
+          ) {
+            overlayPayload.push({
+              id: sat.details.NORAD_CAT_ID || `payload-${index}`,
+              x: screenX,
+              y: screenY,
+              seed: Number(sat.details.NORAD_CAT_ID) || index + 1,
+              sat,
+            });
           }
-
-          if (!occluded) {
-            tmpProjected.copy(tmpWorldPos).project(camera);
-            const screenX = (tmpProjected.x * 0.5 + 0.5) * viewport.width;
-            const screenY = (-tmpProjected.y * 0.5 + 0.5) * viewport.height;
-            if (
-              screenX >= 0 &&
-              screenX <= viewport.width &&
-              screenY >= 0 &&
-              screenY <= viewport.height
-            ) {
-              overlayPayload.push({
-                id: sat.details.NORAD_CAT_ID || `payload-${i}`,
-                x: screenX,
-                y: screenY,
-                seed: Number(sat.details.NORAD_CAT_ID) || i + 1,
-                sat,
-              });
-            }
-          }
-        }
       }
     });
 
@@ -449,95 +282,58 @@ function SatelliteSwarm({
     const elapsed = state.clock.getElapsedTime();
     if (elapsed - overlayUpdateRef.current > 0.05) {
       overlayUpdateRef.current = elapsed;
-      if (onPayloadOverlayUpdate) {
-        onPayloadOverlayUpdate(overlayPayload);
-      }
+      onPayloadOverlayUpdate?.(overlayPayload);
     }
   });
 
   const isOccludedFromCamera = useCallback(
-    (satPos) => {
-      if (!satPos) return false;
-      const camPos = camera.position;
-      tmpClickDir.subVectors(satPos, camPos);
-      const a = tmpClickDir.lengthSq();
-      if (a <= 0) return false;
-      const b = 2 * camPos.dot(tmpClickDir);
-      const c =
-        camPos.lengthSq() - EARTH_OCCLUSION_RADIUS * EARTH_OCCLUSION_RADIUS;
-      const discriminant = b * b - 4 * a * c;
-      if (discriminant < 0) return false;
-      const sqrtDisc = Math.sqrt(discriminant);
-      const t1 = (-b - sqrtDisc) / (2 * a);
-      const t2 = (-b + sqrtDisc) / (2 * a);
-      const tMin = Math.min(t1, t2);
-      const tMax = Math.max(t1, t2);
-      return (tMin >= 0 && tMin <= 1) || (tMax >= 0 && tMax <= 1);
-    },
+    (satPos) => isOccludedByEarth(camera.position, satPos),
     [camera]
   );
 
-  const handlePointerDown = (e) => {
-    pointerDownPos.current = { x: e.clientX, y: e.clientY };
+  const handlePointerDown = (event) => {
+    pointerDownPos.current = { x: event.clientX, y: event.clientY };
   };
 
-  const handleClick = (e) => {
-    e.stopPropagation();
+  const handleClick = (event) => {
+    event.stopPropagation();
 
-    // Ignore drags — only select if pointer barely moved
-    const dx = e.clientX - pointerDownPos.current.x;
-    const dy = e.clientY - pointerDownPos.current.y;
-    if (dx * dx + dy * dy > 25) return; // 5px threshold
+    const dx = event.clientX - pointerDownPos.current.x;
+    const dy = event.clientY - pointerDownPos.current.y;
+    if (dx * dx + dy * dy > 25) return;
 
-    const instanceId = e.instanceId;
-    if (instanceId === undefined || instanceId >= filteredSatData.length) {
-      return;
-    }
+    const instanceId = event.instanceId;
+    if (instanceId === undefined || instanceId >= satData.length) return;
 
     const satPos = satPositionsRef.current[instanceId];
-    if (isOccludedFromCamera(satPos)) {
-      return;
-    }
+    if (isOccludedFromCamera(satPos)) return;
 
-    if (onSelectionPing) {
-      onSelectionPing({ x: e.clientX, y: e.clientY });
-    }
-    onSelectSatellite(filteredSatData[instanceId]);
+    onSelectionPing?.({ x: event.clientX, y: event.clientY });
+    onSelectSatellite(satData[instanceId]);
   };
 
-  if (filteredSatData.length === 0) return null;
+  if (satData.length === 0) return null;
 
   return (
     <>
-      {/* Instanced satellite dots */}
-      <instancedMesh ref={meshRef} args={[null, null, filteredSatData.length]}>
+      <instancedMesh ref={meshRef} args={[null, null, satData.length]}>
         <sphereGeometry args={[BASE_SATELLITE_RADIUS, 8, 8]} />
         <meshBasicMaterial color="#ffffff" toneMapped={false} />
       </instancedMesh>
 
-      {/* Invisible hitboxes to keep dots clickable */}
       <instancedMesh
         ref={hitboxRef}
-        args={[null, null, filteredSatData.length]}
+        args={[null, null, satData.length]}
         onPointerDown={handlePointerDown}
         onClick={handleClick}
       >
         <sphereGeometry args={[BASE_SATELLITE_RADIUS, 8, 8]} />
-        <meshBasicMaterial
-          transparent
-          opacity={0}
-          depthWrite={false}
-          depthTest={false}
-        />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} depthTest={false} />
       </instancedMesh>
-
     </>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 6. Selected Satellite — large glowing dot + info card above (like SS3)
-// ─────────────────────────────────────────────────────────────────────────────
 function SelectionHalo() {
   const ringRef = useRef();
   const { camera } = useThree();
@@ -550,73 +346,61 @@ function SelectionHalo() {
   });
 
   return (
-    <>
-      <mesh ref={ringRef} renderOrder={999}>
-        <ringGeometry args={[0.05, 0.068, 48]} />
-        <meshBasicMaterial
-          color="#f5c842"
-          transparent
-          opacity={0.65}
-          toneMapped={false}
-          side={THREE.DoubleSide}
-          depthTest={false}
-          depthWrite={false}
-        />
-      </mesh>
-    </>
+    <mesh ref={ringRef}>
+      <ringGeometry
+        args={[SELECTION_HALO_INNER_RADIUS, SELECTION_HALO_OUTER_RADIUS, 48]}
+      />
+      <meshBasicMaterial
+        color="#f5c842"
+        transparent
+        opacity={0.65}
+        toneMapped={false}
+        side={THREE.DoubleSide}
+        depthWrite={false}
+      />
+    </mesh>
   );
 }
 
 function SelectedSatelliteMarker({ sat }) {
   const markerRef = useRef();
-  const [posData, setPosData] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
+  const lastHudUpdateRef = useRef(0);
+  const { camera } = useThree();
 
-  useFrame(() => {
-    const data = getSatellitePosition(sat.satrec);
-    if (data && markerRef.current) {
-      markerRef.current.position.set(...data.position);
-      setPosData(data);
+  useFrame((state) => {
+    const nextSnapshot = getPropagationSnapshot(sat.satrec);
+    if (!nextSnapshot || !markerRef.current) return;
+
+    markerRef.current.position.set(...nextSnapshot.position);
+    markerRef.current.visible = !isOccludedByEarth(
+      camera.position,
+      markerRef.current.position,
+      SELECTED_MARKER_OCCLUSION_PADDING
+    );
+
+    if (state.clock.elapsedTime - lastHudUpdateRef.current > 0.2) {
+      lastHudUpdateRef.current = state.clock.elapsedTime;
+      setSnapshot(nextSnapshot);
     }
   });
 
-  const altKm = posData ? Math.round(posData.height) : "—";
+  const altitude = snapshot ? Math.round(snapshot.altitudeKm) : "--";
 
   return (
     <group ref={markerRef}>
-      {/* Large solid dot (like the yellow satellite in SS3) */}
-      <mesh renderOrder={998}>
-        <sphereGeometry args={[0.022, 16, 16]} />
-        <meshBasicMaterial
-          color="#f5c842"
-          toneMapped={false}
-          depthTest={false}
-          depthWrite={false}
-        />
-      </mesh>
-
-      {/* Outer halo glow */}
       <mesh>
+        <sphereGeometry args={[SELECTED_MARKER_RADIUS, 16, 16]} />
         <meshBasicMaterial
           color="#f5c842"
           toneMapped={false}
-          depthTest={false}
-          depthWrite={false}
-        />
-        <meshBasicMaterial
-          color="#f5c842"
-          transparent
-          opacity={0.18}
-          toneMapped={false}
+          depthWrite
         />
       </mesh>
 
-      {/* Screen-space facing selection ring */}
       <SelectionHalo />
-      depthTest={false}
-      depthWrite={false}
 
-      {/* Info card floating above the satellite */}
-      {posData && (
+      {snapshot && (
         <Html
           center
           distanceFactor={8}
@@ -629,8 +413,8 @@ function SelectedSatelliteMarker({ sat }) {
           <div className="sat-target-card">
             <div className="sat-target-name">{sat.details.OBJECT_NAME}</div>
             <div className="sat-target-details">
-              <span className="sat-target-alt">{altKm} km</span>
-              <span className="sat-target-sep">—</span>
+              <span className="sat-target-alt">{altitude} km</span>
+              <span className="sat-target-sep">-</span>
               <span className="sat-target-norad">
                 NORAD {sat.details.NORAD_CAT_ID}
               </span>
@@ -642,51 +426,147 @@ function SelectedSatelliteMarker({ sat }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 7. Main Globe Export
-// ─────────────────────────────────────────────────────────────────────────────
-export default function Globe({ satTypes, onSelectionPing }) {
-  const [selectedSat, setSelectedSat] = useState(null);
+export default function Globe({
+  satTypes,
+  onSelectionPing,
+  onTargetChange,
+  onOpenAnalysis,
+  onDatasetStatsChange,
+}) {
   const controlsRef = useRef();
+  const [selectedSat, setSelectedSat] = useState(null);
+  const [allSatData, setAllSatData] = useState([]);
+  const [datasetMeta, setDatasetMeta] = useState({
+    status: "loading",
+    cached: false,
+    cacheAgeSeconds: null,
+    generatedAt: null,
+    fetchWindowOpen: null,
+    error: null,
+  });
   const [payloadOverlayMarkers, setPayloadOverlayMarkers] = useState([]);
   const markerSprite = useMemo(() => createPayloadMarkerSprite(), []);
+
+  const filteredSatData = useMemo(() => {
+    if (!Array.isArray(satTypes) || satTypes.length === 0) return [];
+    return allSatData.filter((sat) => satTypes.includes(sat.type));
+  }, [allSatData, satTypes]);
+
+  const datasetStats = useMemo(
+    () => buildDatasetStats(allSatData, datasetMeta),
+    [allSatData, datasetMeta]
+  );
+
+  const analysisSnapshot = useMemo(() => {
+    if (!selectedSat) return null;
+    return buildTargetAnalysis(selectedSat, allSatData);
+  }, [allSatData, selectedSat]);
+
   const orbitColor = selectedSat
-    ? selectedSat.type === "PAYLOAD"
-      ? "#6395EE"
-      : selectedSat.type === "ROCKET BODY"
-        ? "#00FF00"
-        : selectedSat.type === "DEBRIS"
-          ? "#b08a6b"
-          : "#ff4444"
+    ? getObjectTypeColor(selectedSat.type)
     : "#ff4444";
 
   useEffect(() => {
+    onDatasetStatsChange?.(datasetStats);
+  }, [datasetStats, onDatasetStatsChange]);
+
+  useEffect(() => {
+    const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
+    const controller = new AbortController();
+
+    async function loadSatellites() {
+      try {
+        const response = await fetch(`${apiBaseUrl}/satellites`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Request failed (${response.status})`);
+        }
+
+        const payload = await response.json();
+        const records = Array.isArray(payload.data)
+          ? payload.data
+              .filter((sat) => sat?.TLE_LINE1 && sat?.TLE_LINE2)
+              .map((sat) => {
+                const type = normalizeObjectType(sat.OBJECT_TYPE);
+                return {
+                  satrec: twoline2satrec(sat.TLE_LINE1, sat.TLE_LINE2),
+                  color: new THREE.Color(getObjectTypeColor(type)),
+                  type,
+                  details: sat,
+                };
+              })
+              .filter((record) => record.satrec)
+          : [];
+
+        setAllSatData(records);
+        setDatasetMeta({
+          status: payload.status || "ready",
+          cached: Boolean(payload.cached),
+          cacheAgeSeconds: payload.cache_age_seconds ?? null,
+          generatedAt: payload.generated_at ?? new Date().toISOString(),
+          fetchWindowOpen: payload.fetch_window_open ?? null,
+          error: null,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+
+        setAllSatData([]);
+        setDatasetMeta({
+          status: "error",
+          cached: false,
+          cacheAgeSeconds: null,
+          generatedAt: null,
+          fetchWindowOpen: null,
+          error: error instanceof Error ? error.message : "Unknown fetch error",
+        });
+      }
+    }
+
+    loadSatellites();
+
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     if (!selectedSat) return;
-    if (!satTypes || !satTypes.includes(selectedSat.type)) {
+
+    const isVisible = filteredSatData.some(
+      (sat) => sat.details.NORAD_CAT_ID === selectedSat.details.NORAD_CAT_ID
+    );
+
+    if (!isVisible) {
       setSelectedSat(null);
       if (controlsRef.current) {
         controlsRef.current.target.set(0, 0, 0);
       }
     }
-  }, [satTypes, selectedSat]);
+  }, [filteredSatData, selectedSat]);
+
+  useEffect(() => {
+    if (selectedSat && analysisSnapshot) {
+      onTargetChange?.({ target: selectedSat, analysis: analysisSnapshot });
+    } else {
+      onTargetChange?.(null);
+    }
+  }, [analysisSnapshot, onTargetChange, selectedSat]);
 
   const handlePayloadOverlayUpdate = useCallback((markers) => {
     setPayloadOverlayMarkers(markers);
   }, []);
 
-  const handleSelectSatellite = useCallback(
-    (sat) => {
+  const handleSelectSatellite = useCallback((sat) => {
+    setSelectedSat((current) => {
       if (
-        selectedSat &&
-        sat.details.NORAD_CAT_ID === selectedSat.details.NORAD_CAT_ID
+        current &&
+        sat.details.NORAD_CAT_ID === current.details.NORAD_CAT_ID
       ) {
-        setSelectedSat(null);
-      } else {
-        setSelectedSat(sat);
+        return null;
       }
-    },
-    [selectedSat]
-  );
+      return sat;
+    });
+  }, []);
 
   const handleClearTarget = useCallback(() => {
     setSelectedSat(null);
@@ -699,9 +579,7 @@ export default function Globe({ satTypes, onSelectionPing }) {
     (marker) => {
       if (!marker?.sat) return;
       handleSelectSatellite(marker.sat);
-      if (onSelectionPing) {
-        onSelectionPing({ x: marker.x, y: marker.y });
-      }
+      onSelectionPing?.({ x: marker.x, y: marker.y });
     },
     [handleSelectSatellite, onSelectionPing]
   );
@@ -715,64 +593,89 @@ export default function Globe({ satTypes, onSelectionPing }) {
         background: "#050a10",
       }}
     >
-      {/* Target Details HUD — surveillance panel */}
-      {selectedSat && (
+      {selectedSat && analysisSnapshot && (
         <div className="target-hud-panel">
           <div className="target-hud-header">
-            <span className="target-hud-rec">●</span>
+            <span className="target-hud-rec">o</span>
             <span className="target-hud-title">TARGET LOCK</span>
           </div>
 
           <div className="target-hud-row">
             <span className="target-hud-label">DESIGNATION</span>
-            <span className="target-hud-value">
-              {selectedSat.details.OBJECT_NAME}
-            </span>
+            <span className="target-hud-value">{selectedSat.details.OBJECT_NAME}</span>
           </div>
           <div className="target-hud-row">
             <span className="target-hud-label">TYPE</span>
             <span
               className="target-hud-value"
-              style={{
-                color:
-                  selectedSat.type === "PAYLOAD"
-                    ? "#6395EE"
-                    : selectedSat.type === "DEBRIS"
-                      ? "#b08a6b"
-                      : "#00FF00",
-              }}
+              style={{ color: getObjectTypeColor(selectedSat.type) }}
             >
               {selectedSat.type}
             </span>
           </div>
           <div className="target-hud-row">
             <span className="target-hud-label">NORAD ID</span>
+            <span className="target-hud-value">{selectedSat.details.NORAD_CAT_ID}</span>
+          </div>
+          <div className="target-hud-row">
+            <span className="target-hud-label">ALTITUDE</span>
             <span className="target-hud-value">
-              {selectedSat.details.NORAD_CAT_ID}
+              {analysisSnapshot.currentState.altitudeKm} km
             </span>
           </div>
           <div className="target-hud-row">
-            <span className="target-hud-label">COUNTRY</span>
-            <span className="target-hud-value">
-              {selectedSat.details.COUNTRY_CODE || "UNK"}
+            <span className="target-hud-label">RISK</span>
+            <span
+              className="target-hud-value"
+              style={{ color: analysisSnapshot.riskColor }}
+            >
+              {analysisSnapshot.riskBand}
             </span>
           </div>
           <div className="target-hud-row">
-            <span className="target-hud-label">RCS</span>
+            <span className="target-hud-label">SAMPLED TCA</span>
             <span className="target-hud-value">
-              {selectedSat.details.RCS_SIZE || "UNKNOWN"}
-            </span>
-          </div>
-          <div className="target-hud-row">
-            <span className="target-hud-label">LAUNCH</span>
-            <span className="target-hud-value">
-              {selectedSat.details.LAUNCH_DATE || "—"}
+              {analysisSnapshot.closestApproach
+                ? `T+${analysisSnapshot.closestApproach.sampledTcaMinutes} MIN`
+                : "CLEAR"}
             </span>
           </div>
 
-          <button className="target-hud-clear" onClick={handleClearTarget}>
-            ✕ RELEASE TARGET
-          </button>
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            <button
+              style={{
+                width: "100%",
+                padding: "7px 12px",
+                background: "transparent",
+                borderColor: "rgba(0,229,255,0.35)",
+                color: "rgba(0,229,255,0.8)",
+                border: "1px solid rgba(0,229,255,0.35)",
+                borderRadius: 3,
+                fontFamily: "'DM Mono', monospace",
+                fontSize: "9px",
+                letterSpacing: "1px",
+                cursor: "pointer",
+              }}
+              onClick={onOpenAnalysis}
+            >
+              OPEN ANALYSIS
+            </button>
+            <button className="target-hud-clear" onClick={handleClearTarget}>
+              RELEASE TARGET
+            </button>
+          </div>
+        </div>
+      )}
+
+      {datasetMeta.error && (
+        <div className="target-hud-panel" style={{ bottom: 50, left: 20, width: 300 }}>
+          <div className="target-hud-header">
+            <span className="target-hud-rec">o</span>
+            <span className="target-hud-title">DATA LINK WARNING</span>
+          </div>
+          <div style={{ fontSize: "0.62rem", color: "rgba(200,214,229,0.72)", lineHeight: 1.6 }}>
+            {datasetMeta.error}
+          </div>
         </div>
       )}
 
@@ -784,7 +687,6 @@ export default function Globe({ satTypes, onSelectionPing }) {
           gl.toneMapping = THREE.NoToneMapping;
         }}
       >
-        {/* Stars */}
         <Stars
           radius={100}
           depth={50}
@@ -795,19 +697,15 @@ export default function Globe({ satTypes, onSelectionPing }) {
           speed={1}
         />
 
-        {/* CRT-styled Earth */}
         <CRTEarth />
 
-        {/* Satellite swarm */}
         <SatelliteSwarm
+          satData={filteredSatData}
           onSelectSatellite={handleSelectSatellite}
-          satTypes={satTypes}
-          selectedSat={selectedSat}
           onPayloadOverlayUpdate={handlePayloadOverlayUpdate}
           onSelectionPing={onSelectionPing}
         />
 
-        {/* Orbit trajectory for selected satellite */}
         {selectedSat && (
           <OrbitPath
             satrec={selectedSat.satrec}
@@ -818,15 +716,8 @@ export default function Globe({ satTypes, onSelectionPing }) {
           />
         )}
 
-        {/* Selected satellite marker */}
         {selectedSat && <SelectedSatelliteMarker sat={selectedSat} />}
 
-        {/* Surveillance camera tracker (disabled: keep Earth as main view) */}
-        {false && (
-          <CameraTracker selectedSat={selectedSat} controlsRef={controlsRef} />
-        )}
-
-        {/* Orbit controls */}
         <OrbitControls
           ref={controlsRef}
           enablePan={false}
@@ -836,7 +727,7 @@ export default function Globe({ satTypes, onSelectionPing }) {
           autoRotateSpeed={0.05}
           zoomSpeed={0.3}
           rotateSpeed={0.4}
-          enableDamping={true}
+          enableDamping
           dampingFactor={0.05}
         />
       </Canvas>

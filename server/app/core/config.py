@@ -9,8 +9,6 @@ class Settings(BaseSettings):
     env: str = "development"
     log_level: str = "info"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
-
-    # Add these two lines:
     spacetrack_user: str = ""
     spacetrack_pass: str = ""
 

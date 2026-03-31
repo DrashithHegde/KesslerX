@@ -1,14 +1,14 @@
-# GeoSense Server (FastAPI)
+# KesslerX Server (FastAPI)
 
-Minimal backend scaffold for easy frontend integration.
+Backend for the tracked-object feed used by the KesslerX globe.
 
 ## Structure
 
-- `app/main.py` → FastAPI app + CORS + `/api` router mount
-- `app/api/routes.py` → starter endpoints
-- `app/core/config.py` → env-based settings
-- `app/schemas/anomaly.py` → response models
-- `run.py` → local entrypoint with auto-reload in development
+- `app/main.py` -> FastAPI app and `/api` router mount
+- `app/api/routes.py` -> health and satellite feed endpoints
+- `app/core/config.py` -> env-driven settings
+- `run.py` -> local development entrypoint
+- `tle_cache.json` -> cached Space-Track response data
 
 ## Quick start
 
@@ -22,18 +22,25 @@ copy .env.example .env
 python run.py
 ```
 
-API will run at `http://127.0.0.1:8000`.
+API runs at `http://127.0.0.1:8000`.
 
-## Starter endpoints
+## Environment
+
+`/api/satellites` requires Space-Track credentials in `.env`:
+
+```env
+SPACETRACK_USER=your-email
+SPACETRACK_PASS=your-password
+```
+
+## Endpoints
 
 - `GET /api/health`
-- `GET /api/anomalies?city=mumbai`
+- `GET /api/satellites`
 
-## Frontend integration
+The satellites endpoint returns:
 
-`client/vite.config.js` already proxies `/api` to `http://127.0.0.1:8000`.
-So from React, call:
-
-```js
-fetch('/api/health')
-```
+- tracked GP objects from Space-Track
+- a cache status (`fresh_cache`, `stale_cache_waiting_for_window`, `newly_fetched`)
+- whether the response came from cache
+- cache age and fetch-window metadata

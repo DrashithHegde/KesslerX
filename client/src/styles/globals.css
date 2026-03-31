@@ -39,10 +39,6 @@ select {
 }
 
 /* Map canvas inherits whatever cursor the UI is using */
-.mapboxgl-canvas {
-  cursor: inherit !important;
-}
-
 /* ── CSS Variables ────────────────────────────────────────────────────────── */
 :root {
   --bg: #0b0f14;
@@ -63,17 +59,6 @@ select {
   --radius-lg: 14px;
 }
 
-.mapboxgl-canvas {
-  outline: none !important;
-}
-
-.mapboxgl-ctrl-bottom-left,
-.mapboxgl-ctrl-bottom-right,
-.mapboxgl-ctrl-top-left,
-.mapboxgl-ctrl-top-right {
-  display: none !important;
-}
-
 .satellite-mask {
   position: absolute;
   inset: 0;
@@ -89,10 +74,6 @@ select {
   -webkit-backdrop-filter: blur(16px) brightness(0.34) saturate(0.65);
   -webkit-mask-image: radial-gradient(circle at 50% 56%, transparent 0 28%, #000 50%, #000 100%);
   mask-image: radial-gradient(circle at 50% 56%, transparent 0 28%, #000 50%, #000 100%);
-}
-
-.satellite-ring {
-  display: none;
 }
 
 /* ── Scrollbar ────────────────────────────────────────────────────────────── */
@@ -255,12 +236,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @keyframes slideInLeft {
   from {
     opacity: 0;
-    transform: translateX(-28px) translateY(-50%);
+    transform: translateX(-28px);
   }
 
   to {
     opacity: 1;
-    transform: translateX(0) translateY(-50%);
+    transform: translateX(0);
   }
 }
 
@@ -304,77 +285,45 @@ input[type="range"]::-webkit-slider-thumb:hover {
   animation: slideInUp 0.40s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Anomaly markers */
-@keyframes anomalyPulse {
-
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.85;
-  }
-
-  50% {
-    transform: scale(1.14);
-    opacity: 1;
-  }
-}
-
-@keyframes anomalyRing {
-  0% {
-    transform: scale(1);
-    opacity: 0.6;
-  }
-
-  100% {
-    transform: scale(2.4);
-    opacity: 0;
-  }
-}
-
-.anomaly-zone {
-  animation: anomalyPulse 2s ease-in-out infinite;
-}
-
-.anomaly-zone-ring {
-  animation: anomalyRing 2s ease-out infinite;
-}
-
-.anomaly-zone-ring-2 {
-  animation: anomalyRing 2s ease-out infinite 0.7s;
-}
-
 /* Typewriter animation */
 @keyframes typewriter {
   0% {
-    width: 0;
+    max-width: 0;
   }
 
   45% {
-    width: 100%;
+    max-width: var(--typewriter-width, 100%);
   }
 
   55% {
-    width: 100%;
+    max-width: var(--typewriter-width, 100%);
   }
 
   100% {
-    width: 0;
+    max-width: 0;
   }
 }
 
 .typewriter-text {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: top;
+  max-width: 0;
   animation: typewriter 12s steps(55, end) infinite;
-  border-right: 2px solid #d97f2a;
 }
 
 .typewriter-text::after {
   animation: blink 0.7s infinite;
   content: '';
-  display: inline-block;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   width: 2px;
   height: 0.9em;
   background: #d97f2a;
-  margin-left: 2px;
 }
 
 /* Text reveal/hide animation - text appears as cursor moves right, disappears as it moves left */
@@ -977,10 +926,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background-repeat: no-repeat;
   background-size: contain;
   image-rendering: pixelated;
-  animation: payloadMarkerFlicker 2.1s steps(2, end) infinite;
-  opacity: 0.9;
+  animation: payloadMarkerFlicker 3.2s ease-in-out infinite;
+  opacity: 0.84;
   pointer-events: auto;
   cursor: inherit;
+  will-change: opacity, transform;
 }
 
 .payload-marker[role="button"] {
@@ -988,14 +938,20 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 @keyframes payloadMarkerFlicker {
-
   0%,
   100% {
-    opacity: 0.95;
+    opacity: 0.84;
+    transform: translate(-50%, -50%) scale(0.98);
   }
 
-  45% {
-    opacity: 0.65;
+  38% {
+    opacity: 0.72;
+    transform: translate(-50%, -50%) scale(0.965);
+  }
+
+  62% {
+    opacity: 0.88;
+    transform: translate(-50%, -50%) scale(1.01);
   }
 }
 
