@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
-import { Html, OrbitControls, Sphere, Stars } from "@react-three/drei";
+import { OrbitControls, Sphere, Stars } from "@react-three/drei";
 import * as THREE from "three";
 import { twoline2satrec } from "satellite.js/dist/io.js";
 import OrbitPath from "./OrbitPath";
@@ -364,11 +364,9 @@ function SelectionHalo() {
 
 function SelectedSatelliteMarker({ sat }) {
   const markerRef = useRef();
-  const [snapshot, setSnapshot] = useState(null);
-  const lastHudUpdateRef = useRef(0);
   const { camera } = useThree();
 
-  useFrame((state) => {
+  useFrame(() => {
     const nextSnapshot = getPropagationSnapshot(sat.satrec);
     if (!nextSnapshot || !markerRef.current) return;
 
@@ -378,14 +376,7 @@ function SelectedSatelliteMarker({ sat }) {
       markerRef.current.position,
       SELECTED_MARKER_OCCLUSION_PADDING
     );
-
-    if (state.clock.elapsedTime - lastHudUpdateRef.current > 0.2) {
-      lastHudUpdateRef.current = state.clock.elapsedTime;
-      setSnapshot(nextSnapshot);
-    }
   });
-
-  const altitude = snapshot ? Math.round(snapshot.altitudeKm) : "--";
 
   return (
     <group ref={markerRef}>
@@ -399,29 +390,6 @@ function SelectedSatelliteMarker({ sat }) {
       </mesh>
 
       <SelectionHalo />
-
-      {snapshot && (
-        <Html
-          center
-          distanceFactor={8}
-          style={{
-            pointerEvents: "none",
-            transform: "translate(-50%, -260%)",
-          }}
-          zIndexRange={[20, 10]}
-        >
-          <div className="sat-target-card">
-            <div className="sat-target-name">{sat.details.OBJECT_NAME}</div>
-            <div className="sat-target-details">
-              <span className="sat-target-alt">{altitude} km</span>
-              <span className="sat-target-sep">-</span>
-              <span className="sat-target-norad">
-                NORAD {sat.details.NORAD_CAT_ID}
-              </span>
-            </div>
-          </div>
-        </Html>
-      )}
     </group>
   );
 }
@@ -430,8 +398,8 @@ export default function Globe({
   satTypes,
   onSelectionPing,
   onTargetChange,
-  onOpenAnalysis,
   onDatasetStatsChange,
+  selectionClearSignal,
 }) {
   const controlsRef = useRef();
   const [selectedSat, setSelectedSat] = useState(null);
@@ -545,6 +513,14 @@ export default function Globe({
   }, [filteredSatData, selectedSat]);
 
   useEffect(() => {
+    if (!selectionClearSignal) return;
+    setSelectedSat(null);
+    if (controlsRef.current) {
+      controlsRef.current.target.set(0, 0, 0);
+    }
+  }, [selectionClearSignal]);
+
+  useEffect(() => {
     if (selectedSat && analysisSnapshot) {
       onTargetChange?.({ target: selectedSat, analysis: analysisSnapshot });
     } else {
@@ -568,13 +544,6 @@ export default function Globe({
     });
   }, []);
 
-  const handleClearTarget = useCallback(() => {
-    setSelectedSat(null);
-    if (controlsRef.current) {
-      controlsRef.current.target.set(0, 0, 0);
-    }
-  }, []);
-
   const handleMarkerClick = useCallback(
     (marker) => {
       if (!marker?.sat) return;
@@ -593,80 +562,6 @@ export default function Globe({
         background: "#050a10",
       }}
     >
-      {selectedSat && analysisSnapshot && (
-        <div className="target-hud-panel">
-          <div className="target-hud-header">
-            <span className="target-hud-rec">o</span>
-            <span className="target-hud-title">TARGET LOCK</span>
-          </div>
-
-          <div className="target-hud-row">
-            <span className="target-hud-label">DESIGNATION</span>
-            <span className="target-hud-value">{selectedSat.details.OBJECT_NAME}</span>
-          </div>
-          <div className="target-hud-row">
-            <span className="target-hud-label">TYPE</span>
-            <span
-              className="target-hud-value"
-              style={{ color: getObjectTypeColor(selectedSat.type) }}
-            >
-              {selectedSat.type}
-            </span>
-          </div>
-          <div className="target-hud-row">
-            <span className="target-hud-label">NORAD ID</span>
-            <span className="target-hud-value">{selectedSat.details.NORAD_CAT_ID}</span>
-          </div>
-          <div className="target-hud-row">
-            <span className="target-hud-label">ALTITUDE</span>
-            <span className="target-hud-value">
-              {analysisSnapshot.currentState.altitudeKm} km
-            </span>
-          </div>
-          <div className="target-hud-row">
-            <span className="target-hud-label">RISK</span>
-            <span
-              className="target-hud-value"
-              style={{ color: analysisSnapshot.riskColor }}
-            >
-              {analysisSnapshot.riskBand}
-            </span>
-          </div>
-          <div className="target-hud-row">
-            <span className="target-hud-label">SAMPLED TCA</span>
-            <span className="target-hud-value">
-              {analysisSnapshot.closestApproach
-                ? `T+${analysisSnapshot.closestApproach.sampledTcaMinutes} MIN`
-                : "CLEAR"}
-            </span>
-          </div>
-
-          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-            <button
-              style={{
-                width: "100%",
-                padding: "7px 12px",
-                background: "transparent",
-                borderColor: "rgba(0,229,255,0.35)",
-                color: "rgba(0,229,255,0.8)",
-                border: "1px solid rgba(0,229,255,0.35)",
-                borderRadius: 3,
-                fontFamily: "'DM Mono', monospace",
-                fontSize: "9px",
-                letterSpacing: "1px",
-                cursor: "pointer",
-              }}
-              onClick={onOpenAnalysis}
-            >
-              OPEN ANALYSIS
-            </button>
-            <button className="target-hud-clear" onClick={handleClearTarget}>
-              RELEASE TARGET
-            </button>
-          </div>
-        </div>
-      )}
-
       {datasetMeta.error && (
         <div className="target-hud-panel" style={{ bottom: 50, left: 20, width: 300 }}>
           <div className="target-hud-header">
