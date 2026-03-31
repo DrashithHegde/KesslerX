@@ -7,6 +7,7 @@ import TopBar from "./components/panels/TopBar";
 import LayerControls from "./components/panels/LayerControls";
 import DeepAnalysisOverlay from "./components/panels/DeepAnalysisOverlay";
 import BottomBar from "./components/panels/BottomBar";
+import TacticalInsightPanel from "./components/panels/TacticalInsightPanel";
 import HUDCorners from "./components/hud/HUDCorners";
 import StatusBar from "./components/hud/StatusBar";
 import Toast from "./components/hud/Toast";
@@ -46,6 +47,7 @@ export default function App() {
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [datasetStats, setDatasetStats] = useState(EMPTY_DATASET_STATS);
   const [layerControlsTop, setLayerControlsTop] = useState(208);
+  const [selectionClearSignal, setSelectionClearSignal] = useState(0);
   const previousTargetIdRef = useRef(null);
 
   const emitCursorPing = useCallback(({ x, y }) => {
@@ -140,6 +142,14 @@ export default function App() {
     setAnalysisOpen(false);
   }, []);
 
+  const handleClearTarget = useCallback(() => {
+    setSelectedTarget(null);
+    setAnalysisSnapshot(null);
+    setAnalysisOpen(false);
+    previousTargetIdRef.current = null;
+    setSelectionClearSignal((current) => current + 1);
+  }, []);
+
   const handleDatasetStatsChange = useCallback((nextStats) => {
     setDatasetStats(nextStats);
   }, []);
@@ -194,8 +204,8 @@ export default function App() {
         satTypes={activeSatTypes}
         onSelectionPing={emitCursorPing}
         onTargetChange={handleTargetChange}
-        onOpenAnalysis={handleOpenAnalysis}
         onDatasetStatsChange={handleDatasetStatsChange}
+        selectionClearSignal={selectionClearSignal}
       />
 
       <div
@@ -219,6 +229,13 @@ export default function App() {
         satTypeConfig={SAT_TYPE_CONFIG}
         datasetStats={datasetStats}
         topOffset={layerControlsTop}
+      />
+
+      <TacticalInsightPanel
+        target={selectedTarget}
+        analysis={analysisSnapshot}
+        onOpenAnalysis={handleOpenAnalysis}
+        onClearTarget={handleClearTarget}
       />
 
       <DeepAnalysisOverlay

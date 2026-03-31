@@ -58,6 +58,14 @@ export function getRiskColor(score) {
   return "#00d1ff";
 }
 
+export function getDensityBand(shellPopulation) {
+  if (!Number.isFinite(shellPopulation)) return "UNKNOWN";
+  if (shellPopulation >= 40) return "SATURATED";
+  if (shellPopulation >= 22) return "DENSE";
+  if (shellPopulation >= 10) return "MODERATE";
+  return "SPARSE";
+}
+
 export function getOrbitalRegime(altitudeKm) {
   if (!Number.isFinite(altitudeKm)) return "UNKNOWN";
   if (altitudeKm < 2000) return "LEO";
@@ -304,6 +312,16 @@ export function buildTargetAnalysis(target, records) {
   const closeShellCount = candidateStates.filter(
     (candidate) => candidate.altitudeDeltaKm <= 50
   ).length;
+  const nearbyObjects = [...candidateStates]
+    .sort((left, right) => left.currentSeparationKm - right.currentSeparationKm)
+    .slice(0, 3)
+    .map((candidate) => ({
+      objectName: candidate.target.details.OBJECT_NAME || "UNKNOWN OBJECT",
+      objectType: candidate.target.type,
+      noradId: candidate.target.details.NORAD_CAT_ID,
+      currentSeparationKm: candidate.currentSeparationKm,
+      altitudeDeltaKm: candidate.altitudeDeltaKm,
+    }));
 
   const shortlist = [...candidateStates]
     .sort(
@@ -372,6 +390,11 @@ export function buildTargetAnalysis(target, records) {
     0,
     100
   );
+  const uncertaintyScoreRounded = round(uncertaintyScore, 1);
+  const densityBand = getDensityBand(shellPopulation.length);
+  const shellDebrisRatio = shellPopulation.length > 0
+    ? round((shellDebrisCount / shellPopulation.length) * 100, 1)
+    : 0;
   const closestScore = closestApproach
     ? separationRiskScore(closestApproach.minSeparationKm) * 0.32
     : 0;
@@ -394,9 +417,12 @@ export function buildTargetAnalysis(target, records) {
     launchAgeYears: targetLaunchAgeYears,
     shellPopulation: shellPopulation.length,
     shellDebrisCount,
+    shellDebrisRatio,
     closeShellCount,
-    uncertaintyScore: round(uncertaintyScore, 1),
+    densityBand,
+    uncertaintyScore: uncertaintyScoreRounded,
     closestApproach,
+    nearbyObjects,
     riskTimeline,
     screeningTimes,
     summary: buildSummary({
@@ -405,14 +431,14 @@ export function buildTargetAnalysis(target, records) {
       closestApproach,
       riskBand,
       shellPopulation: shellPopulation.length,
-      uncertaintyScore: round(uncertaintyScore, 1),
+      uncertaintyScore: uncertaintyScoreRounded,
     }),
     drivers: buildRiskDrivers({
       target,
       shellPopulation: shellPopulation.length,
       shellDebrisCount,
       closestApproach,
-      uncertaintyScore: round(uncertaintyScore, 1),
+      uncertaintyScore: uncertaintyScoreRounded,
     }),
     mitigations: buildMitigations({ riskBand, target, closestApproach }),
     note:
