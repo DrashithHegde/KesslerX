@@ -48,41 +48,39 @@ export default function ClassificationHeader({ onBoundsChange }) {
       ref={headerRef}
       style={{
         position: "fixed",
-        top: 100,
-        left: 12,
+        top: 56,
+        left: 22,
         zIndex: 40,
         fontFamily: "'DM Mono', monospace",
-        fontSize: "0.65rem",
-        letterSpacing: "0.15em",
-        color: "#d97f2a",
-        textShadow: "0 0 8px rgba(217, 127, 42, 0.5)",
+        fontSize: "0.5rem",
+        letterSpacing: "0.12em",
+        color: "rgba(200,214,229,0.56)",
         pointerEvents: "none",
-        lineHeight: 1.6,
+        lineHeight: 1.5,
+        padding: "6px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(0,229,255,0.08)",
+        background: "rgba(11,15,20,0.5)",
       }}
     >
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>
-        TOP SECRET // KESSLERX // NOFORN
-      </div>
-      <div style={{ fontSize: "0.55rem", opacity: 0.85 }}>
-        SENTINEL-02 ORBITAL WATCH
-      </div>
-      <div style={{ fontSize: "0.55rem", opacity: 0.85, marginTop: 3 }}>
-        LEO SCREENING GRID
-      </div>
-
-      <div
-        ref={summaryRef}
-        className="typewriter-text"
-        style={{
-          "--typewriter-width": summaryWidth ? `${summaryWidth}px` : undefined,
-          marginTop: 4,
-          fontSize: "0.45rem",
-          opacity: 0.7,
-          height: "1.2em",
-          fontFamily: "'DM Mono', monospace",
-        }}
-      >
-        {summaryLine}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ color: "rgba(0,229,255,0.7)", textTransform: "uppercase" }}>
+          Sentinel-02
+        </span>
+        <span style={{ color: "rgba(200,214,229,0.28)" }}>|</span>
+        <div
+          ref={summaryRef}
+          className="typewriter-text"
+          style={{
+            "--typewriter-width": summaryWidth ? `${summaryWidth}px` : undefined,
+            fontSize: "0.44rem",
+            opacity: 0.7,
+            height: "1.2em",
+            fontFamily: "'DM Mono', monospace",
+          }}
+        >
+          {summaryLine}
+        </div>
       </div>
     </div>
   );

@@ -30,6 +30,8 @@ const NON_PAYLOAD_HIT_SCALE_MIN = 1;
 const NON_PAYLOAD_HIT_SCALE_MAX = 22;
 const EARTH_OCCLUSION_RADIUS = EARTH_RADIUS * 1.01;
 const SELECTED_MARKER_OCCLUSION_PADDING = SELECTED_MARKER_RADIUS;
+const IMPACT_PROXIMITY_THRESHOLD_KM = 900;
+const COLLISION_WAVE_THRESHOLD_KM = 1800;
 
 function createPayloadMarkerSprite() {
   if (typeof document === "undefined") return null;
@@ -177,11 +179,68 @@ function CRTEarth() {
   );
 }
 
+function distanceBetweenPositionsKm(left, right) {
+  if (!left || !right) return Infinity;
+  const dx = left[0] - right[0];
+  const dy = left[1] - right[1];
+  const dz = left[2] - right[2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz) * 6371;
+}
+
+function lerpPosition(left, right, alpha) {
+  return [
+    left[0] + (right[0] - left[0]) * alpha,
+    left[1] + (right[1] - left[1]) * alpha,
+    left[2] + (right[2] - left[2]) * alpha,
+  ];
+}
+
+function smoothstep(edge0, edge1, value) {
+  const x = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return x * x * (3 - 2 * x);
+}
+
+function zoneColor(score) {
+  if (score >= 80) return "#ff6b5f";
+  if (score >= 60) return "#ff9f43";
+  return "#ffd166";
+}
+
+function UncertaintyZones({ zones = [] }) {
+  const visibleZones = zones.slice(0, 3);
+
+  return (
+    <group>
+      {visibleZones.map((zone, index) => {
+        const radius = 1 + zone.shell_mid_km / 6371;
+        const color = zoneColor(zone.uncertainty_score);
+        const opacity = Math.max(0.012, 0.028 - index * 0.006);
+
+        return (
+          <mesh key={`${zone.shell_start_km}-${zone.shell_end_km}`} scale={[1, EARTH_POLAR_SCALE, 1]}>
+            <sphereGeometry args={[radius, 40, 28]} />
+            <meshBasicMaterial
+              color={color}
+              transparent
+              opacity={opacity}
+              depthWrite={false}
+              toneMapped={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
 function SatelliteSwarm({
   satData,
   onSelectSatellite,
   onPayloadOverlayUpdate,
   onSelectionPing,
+  simProgressRef,
+  simOffsetHours,
 }) {
   const { camera } = useThree();
   const meshRef = useRef();
@@ -210,7 +269,9 @@ function SatelliteSwarm({
   useFrame((state) => {
     if (!meshRef.current || !hitboxRef.current || satData.length === 0) return;
 
-    const now = new Date();
+    const simProgress = simProgressRef?.current || 0;
+    const offsetHours = simOffsetHours ?? simProgress * 6;
+    const now = new Date(Date.now() + offsetHours * 3600 * 1000);
     const dummy = new THREE.Object3D();
     const overlayPayload = [];
     const viewport = state.size;
@@ -316,12 +377,13 @@ function SatelliteSwarm({
 
   return (
     <>
-      <instancedMesh ref={meshRef} args={[null, null, satData.length]}>
+      <instancedMesh key={`visual-${satData.length}`} ref={meshRef} args={[null, null, satData.length]}>
         <sphereGeometry args={[BASE_SATELLITE_RADIUS, 8, 8]} />
         <meshBasicMaterial color="#ffffff" toneMapped={false} />
       </instancedMesh>
 
       <instancedMesh
+        key={`hitbox-${satData.length}`}
         ref={hitboxRef}
         args={[null, null, satData.length]}
         onPointerDown={handlePointerDown}
@@ -334,7 +396,12 @@ function SatelliteSwarm({
   );
 }
 
-function SelectionHalo() {
+function SelectionHalo({
+  color = "#f5c842",
+  innerRadius = SELECTION_HALO_INNER_RADIUS,
+  outerRadius = SELECTION_HALO_OUTER_RADIUS,
+  opacity = 0.65,
+}) {
   const ringRef = useRef();
   const { camera } = useThree();
 
@@ -348,12 +415,12 @@ function SelectionHalo() {
   return (
     <mesh ref={ringRef}>
       <ringGeometry
-        args={[SELECTION_HALO_INNER_RADIUS, SELECTION_HALO_OUTER_RADIUS, 48]}
+        args={[innerRadius, outerRadius, 48]}
       />
       <meshBasicMaterial
-        color="#f5c842"
+        color={color}
         transparent
-        opacity={0.65}
+        opacity={opacity}
         toneMapped={false}
         side={THREE.DoubleSide}
         depthWrite={false}
@@ -362,34 +429,388 @@ function SelectionHalo() {
   );
 }
 
-function SelectedSatelliteMarker({ sat }) {
+function SelectedSatelliteMarker({
+  sat,
+  simProgressRef,
+  simOffsetHours = 0,
+  referenceTime = null,
+  color = "#f5c842",
+  markerRadius = SELECTED_MARKER_RADIUS,
+  haloInnerRadius = SELECTION_HALO_INNER_RADIUS,
+  haloOuterRadius = SELECTION_HALO_OUTER_RADIUS,
+  haloOpacity = 0.65,
+  forceVisible = false,
+}) {
   const markerRef = useRef();
   const { camera } = useThree();
 
   useFrame(() => {
-    const nextSnapshot = getPropagationSnapshot(sat.satrec);
+    const simProgress = simProgressRef?.current || 0;
+    const now =
+      referenceTime instanceof Date
+        ? referenceTime
+        : new Date(Date.now() + (simOffsetHours ?? simProgress * 6) * 3600 * 1000);
+    const nextSnapshot = getPropagationSnapshot(sat.satrec, now);
     if (!nextSnapshot || !markerRef.current) return;
 
     markerRef.current.position.set(...nextSnapshot.position);
-    markerRef.current.visible = !isOccludedByEarth(
-      camera.position,
-      markerRef.current.position,
-      SELECTED_MARKER_OCCLUSION_PADDING
-    );
+    markerRef.current.visible = forceVisible
+      ? true
+      : !isOccludedByEarth(
+          camera.position,
+          markerRef.current.position,
+          SELECTED_MARKER_OCCLUSION_PADDING
+        );
   });
 
   return (
     <group ref={markerRef}>
       <mesh>
-        <sphereGeometry args={[SELECTED_MARKER_RADIUS, 16, 16]} />
+        <sphereGeometry args={[markerRadius, 16, 16]} />
         <meshBasicMaterial
-          color="#f5c842"
+          color={color}
           toneMapped={false}
+          depthTest={!forceVisible}
           depthWrite
         />
       </mesh>
 
-      <SelectionHalo />
+      <SelectionHalo
+        color={color}
+        innerRadius={haloInnerRadius}
+        outerRadius={haloOuterRadius}
+        opacity={haloOpacity}
+      />
+    </group>
+  );
+}
+
+function PairLink({
+  leftSat,
+  rightSat,
+  referenceTime,
+  simOffsetHours = 0,
+  simProgressRef,
+  color = "#77dcff",
+}) {
+  const lineRef = useRef();
+  const leftRef = useRef(new THREE.Vector3());
+  const rightRef = useRef(new THREE.Vector3());
+
+  useFrame(() => {
+    if (!lineRef.current || !leftSat?.satrec || !rightSat?.satrec) return;
+
+    const simProgress = simProgressRef?.current || 0;
+    const now =
+      referenceTime instanceof Date
+        ? referenceTime
+        : new Date(Date.now() + (simOffsetHours ?? simProgress * 6) * 3600 * 1000);
+
+    const leftSnapshot = getPropagationSnapshot(leftSat.satrec, now);
+    const rightSnapshot = getPropagationSnapshot(rightSat.satrec, now);
+    if (!leftSnapshot || !rightSnapshot) return;
+
+    leftRef.current.set(...leftSnapshot.position);
+    rightRef.current.set(...rightSnapshot.position);
+
+    const positions = lineRef.current.geometry.attributes.position.array;
+    positions[0] = leftRef.current.x;
+    positions[1] = leftRef.current.y;
+    positions[2] = leftRef.current.z;
+    positions[3] = rightRef.current.x;
+    positions[4] = rightRef.current.y;
+    positions[5] = rightRef.current.z;
+    lineRef.current.geometry.attributes.position.needsUpdate = true;
+    lineRef.current.computeLineDistances?.();
+  });
+
+  return (
+    <line ref={lineRef} renderOrder={8}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[new Float32Array(6), 3]}
+          count={2}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial
+        color={color}
+        transparent
+        opacity={0.75}
+        depthTest={false}
+        toneMapped={false}
+      />
+    </line>
+  );
+}
+
+function CollisionPulse({ position }) {
+  const coreRef = useRef();
+  const shellRef = useRef();
+
+  useFrame((state) => {
+    const t = state.clock.getElapsedTime();
+    const pulse = (Math.sin(t * 2.4) + 1) * 0.5;
+
+    if (coreRef.current) {
+      const scale = 1 + pulse * 1.4;
+      coreRef.current.scale.setScalar(scale);
+      coreRef.current.material.opacity = 0.45 + pulse * 0.25;
+    }
+
+    if (shellRef.current) {
+      const scale = 1.8 + pulse * 3.4;
+      shellRef.current.scale.setScalar(scale);
+      shellRef.current.material.opacity = 0.22 - pulse * 0.08;
+    }
+  });
+
+  return (
+    <group position={position}>
+      <mesh ref={coreRef} renderOrder={9}>
+        <sphereGeometry args={[0.02, 24, 24]} />
+        <meshBasicMaterial
+          color="#ff7b5f"
+          transparent
+          opacity={0.55}
+          depthTest={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh ref={shellRef} renderOrder={8}>
+        <sphereGeometry args={[0.03, 24, 24]} />
+        <meshBasicMaterial
+          color="#ffb36b"
+          transparent
+          wireframe
+          opacity={0.18}
+          depthTest={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function StaticConnector({ start, end, color = "#ffd166", opacity = 0.45 }) {
+  const positions = useMemo(
+    () => new Float32Array([...start, ...end]),
+    [end, start]
+  );
+
+  return (
+    <line renderOrder={7}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions, 3]}
+          count={2}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial
+        color={color}
+        transparent
+        opacity={opacity}
+        depthTest={false}
+        toneMapped={false}
+      />
+    </line>
+  );
+}
+
+function CollisionSimulationOverlay({ data, startedAt }) {
+  const targetRef = useRef();
+  const candidateRef = useRef();
+  const flashCoreRef = useRef();
+  const flashShellRef = useRef();
+  const fragmentRefs = useRef([]);
+
+  const fragmentDirections = useMemo(
+    () =>
+      Array.from({ length: 150 }, (_, index) => {
+        const phi = Math.acos(1 - (2 * (index + 0.5)) / 150);
+        const theta = Math.PI * (1 + Math.sqrt(5)) * (index + 0.5);
+        return new THREE.Vector3(
+          Math.cos(theta) * Math.sin(phi),
+          Math.sin(theta) * Math.sin(phi),
+          Math.cos(phi)
+        ).normalize();
+      }),
+    []
+  );
+
+  const targetTrailPoints = useMemo(
+    () => [new THREE.Vector3(...data.targetStart), new THREE.Vector3(...data.midpoint)],
+    [data.midpoint, data.targetStart]
+  );
+  const candidateTrailPoints = useMemo(
+    () => [new THREE.Vector3(...data.candidateStart), new THREE.Vector3(...data.midpoint)],
+    [data.candidateStart, data.midpoint]
+  );
+
+  useFrame((state) => {
+    const elapsed = Math.max(0, (Date.now() - startedAt) / 1000);
+    const progress = THREE.MathUtils.clamp(elapsed / 10, 0, 1);
+    const approachProgress = smoothstep(0, 0.42, progress);
+    const impactProgress = smoothstep(0.42, 0.62, progress);
+    const cascadeProgress = smoothstep(0.58, 1, progress);
+
+    const targetPosition =
+      progress < 0.5
+        ? lerpPosition(data.targetStart, data.midpoint, approachProgress)
+        : data.midpoint;
+    const candidatePosition =
+      progress < 0.5
+        ? lerpPosition(data.candidateStart, data.midpoint, approachProgress)
+        : data.midpoint;
+
+    if (targetRef.current) {
+      targetRef.current.position.set(...targetPosition);
+      targetRef.current.visible = progress < 0.58;
+    }
+    if (candidateRef.current) {
+      candidateRef.current.position.set(...candidatePosition);
+      candidateRef.current.visible = progress < 0.58;
+    }
+
+    if (flashCoreRef.current) {
+      const intensity = progress < 0.42 ? 0 : progress < 0.7 ? impactProgress : 1 - (progress - 0.7) / 0.3;
+      const clamped = Math.max(0, intensity);
+      const scale = 1 + clamped * 6.0;
+      flashCoreRef.current.scale.setScalar(scale);
+      flashCoreRef.current.material.opacity = clamped * 0.88;
+    }
+
+    if (flashShellRef.current) {
+      const shellStrength = progress < 0.5 ? 0 : Math.max(0, 1 - (progress - 0.5) / 0.5);
+      flashShellRef.current.scale.setScalar(2.0 + cascadeProgress * 10);
+      flashShellRef.current.material.opacity = shellStrength * 0.32;
+    }
+
+    fragmentRefs.current.forEach((fragment, index) => {
+      if (!fragment) return;
+      const direction = fragmentDirections[index % fragmentDirections.length];
+      const randomOffset = ((index * 137.5) % 1) * 0.8;
+      const radius = 0.08 + cascadeProgress * (0.24 + randomOffset);
+      fragment.position.set(
+        data.midpoint[0] + direction.x * radius,
+        data.midpoint[1] + direction.y * radius,
+        data.midpoint[2] + direction.z * radius
+      );
+      fragment.material.opacity = progress > 0.5 ? 0.9 - cascadeProgress * 0.35 : 0;
+    });
+  });
+
+  return (
+    <group>
+      <line renderOrder={6}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array(targetTrailPoints.flatMap((point) => [point.x, point.y, point.z])), 3]}
+            count={2}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial color="#f5c842" transparent opacity={0.38} depthTest={false} toneMapped={false} />
+      </line>
+      <line renderOrder={6}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array(candidateTrailPoints.flatMap((point) => [point.x, point.y, point.z])), 3]}
+            count={2}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial color="#00e5ff" transparent opacity={0.38} depthTest={false} toneMapped={false} />
+      </line>
+
+      <group ref={targetRef}>
+        <mesh renderOrder={9}>
+          <sphereGeometry args={[0.034, 18, 18]} />
+          <meshBasicMaterial color="#f5c842" depthTest={false} toneMapped={false} />
+        </mesh>
+      </group>
+
+      <group ref={candidateRef}>
+        <mesh renderOrder={9}>
+          <sphereGeometry args={[0.029, 18, 18]} />
+          <meshBasicMaterial color="#00e5ff" depthTest={false} toneMapped={false} />
+        </mesh>
+      </group>
+
+      <group position={data.midpoint}>
+        <mesh ref={flashCoreRef} renderOrder={10}>
+          <sphereGeometry args={[0.024, 20, 20]} />
+          <meshBasicMaterial color="#ff6b5f" transparent opacity={0} depthTest={false} toneMapped={false} />
+        </mesh>
+        <mesh ref={flashShellRef} renderOrder={9}>
+          <sphereGeometry args={[0.04, 24, 24]} />
+          <meshBasicMaterial color="#ffb36b" transparent wireframe opacity={0} depthTest={false} toneMapped={false} />
+        </mesh>
+      </group>
+
+      {fragmentDirections.map((_, index) => (
+        <mesh
+          key={`fragment-${index}`}
+          ref={(node) => {
+            fragmentRefs.current[index] = node;
+          }}
+          position={data.midpoint}
+          renderOrder={8}
+        >
+          <sphereGeometry args={[0.008, 10, 10]} />
+          <meshBasicMaterial color="#ff9f43" transparent opacity={0} depthTest={false} toneMapped={false} />
+        </mesh>
+      ))}
+
+      <CollisionPulse position={data.midpoint} />
+
+      {data.primaryImpacts.map((impact) => (
+        <group key={`impact-${impact.noradId}`} position={impact.position}>
+          <mesh renderOrder={8}>
+            <sphereGeometry args={[impact.isSynthetic ? 0.014 : 0.012, 14, 14]} />
+            <meshBasicMaterial
+              color={impact.isSynthetic ? "#ff8c42" : "#ffd166"}
+              transparent
+              opacity={0.92}
+              depthTest={false}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
+      ))}
+
+      {data.primaryImpacts.map((impact) => (
+        <StaticConnector
+          key={`connector-${impact.noradId}`}
+          start={data.midpoint}
+          end={impact.position}
+          color={impact.isSynthetic ? "#ff8c42" : "#ffd166"}
+          opacity={impact.isSynthetic ? 0.28 : 0.4}
+        />
+      ))}
+
+      {data.cascadeLinks.map((link) => (
+        <group key={`cascade-${link.from.noradId}-${link.to.noradId}`}>
+          <StaticConnector start={link.from.position} end={link.to.position} color="#ff5f57" opacity={0.5} />
+          <group position={link.to.position}>
+            <mesh renderOrder={8}>
+              <sphereGeometry args={[0.013, 14, 14]} />
+              <meshBasicMaterial
+                color="#ff5f57"
+                transparent
+                opacity={0.92}
+                depthTest={false}
+                toneMapped={false}
+              />
+            </mesh>
+          </group>
+        </group>
+      ))}
     </group>
   );
 }
@@ -400,6 +821,15 @@ export default function Globe({
   onTargetChange,
   onDatasetStatsChange,
   selectionClearSignal,
+  focusNoradId,
+  refreshSignal,
+  simOffsetHours = 0,
+  simProgressRef,
+  comparedNoradId = null,
+  activePair = null,
+  scenarioState = null,
+  uncertaintyZones = [],
+  showOrbitalPaths = true,
 }) {
   const controlsRef = useRef();
   const [selectedSat, setSelectedSat] = useState(null);
@@ -424,15 +854,142 @@ export default function Globe({
     () => buildDatasetStats(allSatData, datasetMeta),
     [allSatData, datasetMeta]
   );
+  const simulatedDate = useMemo(
+    () => new Date(Date.now() + simOffsetHours * 3600 * 1000),
+    [simOffsetHours]
+  );
 
   const analysisSnapshot = useMemo(() => {
     if (!selectedSat) return null;
-    return buildTargetAnalysis(selectedSat, allSatData);
-  }, [allSatData, selectedSat]);
+    return buildTargetAnalysis(selectedSat, allSatData, simulatedDate);
+  }, [allSatData, selectedSat, simulatedDate]);
+  const comparedSat = useMemo(() => {
+    if (!comparedNoradId) return null;
+    return allSatData.find((sat) => sat.details.NORAD_CAT_ID === comparedNoradId) || null;
+  }, [allSatData, comparedNoradId]);
+  const pairReferenceTime = useMemo(() => {
+    if (
+      activePair?.sampled_tca_minutes === undefined ||
+      activePair?.sampled_tca_minutes === null ||
+      !selectedSat ||
+      !comparedSat
+    ) {
+      return null;
+    }
+    const baseTime = activePair.sampled_at 
+      ? new Date(activePair.sampled_at).getTime() 
+      : simulatedDate.getTime();
+    return new Date(baseTime + activePair.sampled_tca_minutes * 60 * 1000);
+  }, [activePair, comparedSat, selectedSat, simulatedDate]);
+  const pairModeActive = Boolean(selectedSat && comparedSat && activePair);
+  const collisionVisualization = useMemo(() => {
+    if (
+      scenarioState?.kind !== "collision" ||
+      !scenarioState?.collisionStarted ||
+      !pairModeActive ||
+      !pairReferenceTime ||
+      !selectedSat ||
+      !comparedSat
+    ) {
+      return null;
+    }
+
+    const targetSnapshot = getPropagationSnapshot(selectedSat.satrec, pairReferenceTime);
+    const comparedSnapshot = getPropagationSnapshot(comparedSat.satrec, pairReferenceTime);
+    const approachStartTime = new Date(pairReferenceTime.getTime() - 20 * 60 * 1000);
+    const targetStartSnapshot = getPropagationSnapshot(selectedSat.satrec, approachStartTime);
+    const comparedStartSnapshot = getPropagationSnapshot(comparedSat.satrec, approachStartTime);
+    if (!targetSnapshot || !comparedSnapshot) return null;
+
+    const midpoint = [
+      (targetSnapshot.position[0] + comparedSnapshot.position[0]) / 2,
+      (targetSnapshot.position[1] + comparedSnapshot.position[1]) / 2,
+      (targetSnapshot.position[2] + comparedSnapshot.position[2]) / 2,
+    ];
+
+    const fragmentIds = new Set((scenarioState.fragmentIds || []).map((id) => String(id)));
+    const nearbyObjects = allSatData
+      .filter((sat) => {
+        const noradId = sat.details?.NORAD_CAT_ID;
+        return (
+          noradId !== selectedSat.details.NORAD_CAT_ID &&
+          noradId !== comparedSat.details.NORAD_CAT_ID
+        );
+      })
+      .map((sat) => {
+        const snapshot = getPropagationSnapshot(sat.satrec, pairReferenceTime);
+        if (!snapshot) return null;
+        return {
+          noradId: sat.details.NORAD_CAT_ID,
+          objectName: sat.details?.OBJECT_NAME || sat.details?.NORAD_CAT_ID,
+          type: sat.type,
+          isSynthetic: Boolean(sat.details?.is_synthetic),
+          isFragment: fragmentIds.has(String(sat.details.NORAD_CAT_ID)),
+          position: snapshot.position,
+          distanceKm: distanceBetweenPositionsKm(snapshot.position, midpoint),
+        };
+      })
+      .filter(Boolean)
+      .filter((item) => item.isFragment || item.distanceKm <= COLLISION_WAVE_THRESHOLD_KM)
+      .sort((left, right) => {
+        if (left.isFragment !== right.isFragment) {
+          return left.isFragment ? -1 : 1;
+        }
+        return left.distanceKm - right.distanceKm;
+      })
+      .slice(0, 32);
+
+    const primaryImpacts = nearbyObjects
+      .filter((item) => item.isFragment || item.distanceKm <= IMPACT_PROXIMITY_THRESHOLD_KM)
+      .slice(0, 14);
+
+    const cascadeSources = primaryImpacts.filter((item) => !item.isFragment).slice(0, 3);
+    const cascadeTargets = nearbyObjects.filter(
+      (item) =>
+        !primaryImpacts.some((primary) => primary.noradId === item.noradId) &&
+        !item.isSynthetic &&
+        !item.isFragment
+    );
+
+    const cascadeLinks = cascadeSources
+      .map((source) => {
+        const nextTarget = cascadeTargets
+          .map((candidate) => ({
+            candidate,
+            distanceKm: distanceBetweenPositionsKm(candidate.position, source.position),
+          }))
+          .sort((left, right) => left.distanceKm - right.distanceKm)[0];
+
+        if (!nextTarget) return null;
+        return {
+          from: source,
+          to: nextTarget.candidate,
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      midpoint,
+      targetStart: targetStartSnapshot?.position || targetSnapshot.position,
+      candidateStart: comparedStartSnapshot?.position || comparedSnapshot.position,
+      primaryImpacts,
+      cascadeLinks,
+      affectedCount: primaryImpacts.filter((item) => !item.isFragment && !item.isSynthetic).length,
+      fragmentCount: primaryImpacts.filter((item) => item.isFragment).length,
+    };
+  }, [allSatData, comparedSat, pairModeActive, pairReferenceTime, scenarioState, selectedSat]);
+  const collisionPlaybackActive = Boolean(
+    scenarioState?.kind === "collision" &&
+      scenarioState?.collisionStarted &&
+      collisionVisualization
+  );
 
   const orbitColor = selectedSat
     ? getObjectTypeColor(selectedSat.type)
     : "#ff4444";
+  const comparedOrbitColor = comparedSat
+    ? getObjectTypeColor(comparedSat.type)
+    : "#00e5ff";
 
   useEffect(() => {
     onDatasetStatsChange?.(datasetStats);
@@ -444,8 +1001,12 @@ export default function Globe({
 
     async function loadSatellites() {
       try {
-        const response = await fetch(`${apiBaseUrl}/satellites`, {
+        const response = await fetch(`${apiBaseUrl}/satellites?t=${Date.now()}`, {
           signal: controller.signal,
+          headers: {
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache"
+          }
         });
 
         if (!response.ok) {
@@ -475,6 +1036,7 @@ export default function Globe({
           cacheAgeSeconds: payload.cache_age_seconds ?? null,
           generatedAt: payload.generated_at ?? new Date().toISOString(),
           fetchWindowOpen: payload.fetch_window_open ?? null,
+          source: payload.source ?? "unknown",
           error: null,
         });
       } catch (error) {
@@ -487,6 +1049,7 @@ export default function Globe({
           cacheAgeSeconds: null,
           generatedAt: null,
           fetchWindowOpen: null,
+          source: "unknown",
           error: error instanceof Error ? error.message : "Unknown fetch error",
         });
       }
@@ -495,7 +1058,7 @@ export default function Globe({
     loadSatellites();
 
     return () => controller.abort();
-  }, []);
+  }, [refreshSignal]);
 
   useEffect(() => {
     if (!selectedSat) return;
@@ -519,6 +1082,14 @@ export default function Globe({
       controlsRef.current.target.set(0, 0, 0);
     }
   }, [selectionClearSignal]);
+
+  useEffect(() => {
+    if (!focusNoradId) return;
+    const match = allSatData.find((sat) => sat.details.NORAD_CAT_ID === focusNoradId);
+    if (match) {
+      setSelectedSat(match);
+    }
+  }, [allSatData, focusNoradId]);
 
   useEffect(() => {
     if (selectedSat && analysisSnapshot) {
@@ -593,25 +1164,76 @@ export default function Globe({
         />
 
         <CRTEarth />
+        <UncertaintyZones zones={uncertaintyZones} />
 
         <SatelliteSwarm
           satData={filteredSatData}
           onSelectSatellite={handleSelectSatellite}
           onPayloadOverlayUpdate={handlePayloadOverlayUpdate}
           onSelectionPing={onSelectionPing}
+          simProgressRef={simProgressRef}
+          simOffsetHours={simOffsetHours}
         />
 
-        {selectedSat && (
+        {selectedSat && showOrbitalPaths && (
           <OrbitPath
             satrec={selectedSat.satrec}
             color={orbitColor}
             pastColor={orbitColor}
             futureColor={orbitColor}
             opacity={0.6}
+            referenceTime={pairReferenceTime || simulatedDate}
           />
         )}
+        {pairModeActive && showOrbitalPaths ? (
+          <OrbitPath
+            satrec={comparedSat.satrec}
+            color={comparedOrbitColor}
+            pastColor={comparedOrbitColor}
+            futureColor={comparedOrbitColor}
+            opacity={0.42}
+            referenceTime={pairReferenceTime || simulatedDate}
+          />
+        ) : null}
 
-        {selectedSat && <SelectedSatelliteMarker sat={selectedSat} />}
+        {selectedSat && !collisionPlaybackActive && (
+          <SelectedSatelliteMarker
+            sat={selectedSat}
+            simProgressRef={simProgressRef}
+            simOffsetHours={simOffsetHours}
+            referenceTime={pairReferenceTime}
+            forceVisible={pairModeActive}
+          />
+        )}
+        {selectedSat && comparedSat && !collisionPlaybackActive ? (
+          <SelectedSatelliteMarker
+            sat={comparedSat}
+            simProgressRef={simProgressRef}
+            simOffsetHours={simOffsetHours}
+            referenceTime={pairReferenceTime}
+            color="#00e5ff"
+            markerRadius={0.017}
+            haloInnerRadius={0.036}
+            haloOuterRadius={0.05}
+            haloOpacity={0.58}
+            forceVisible={pairModeActive}
+          />
+        ) : null}
+        {pairModeActive && !collisionPlaybackActive ? (
+          <PairLink
+            leftSat={selectedSat}
+            rightSat={comparedSat}
+            referenceTime={pairReferenceTime}
+            simOffsetHours={simOffsetHours}
+            simProgressRef={simProgressRef}
+          />
+        ) : null}
+        {collisionPlaybackActive ? (
+          <CollisionSimulationOverlay
+            data={collisionVisualization}
+            startedAt={scenarioState.collisionStartedAt || Date.now()}
+          />
+        ) : null}
 
         <OrbitControls
           ref={controlsRef}

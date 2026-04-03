@@ -1,5 +1,12 @@
 import { getObjectTypeColor } from "../../utils/orbitalAnalysis";
 
+function riskBandColor(riskBand) {
+  if (riskBand === "SEVERE") return "#ff5f57";
+  if (riskBand === "HIGH") return "#ff8c42";
+  if (riskBand === "ELEVATED") return "#ffd166";
+  return "#00d1ff";
+}
+
 function SectionLabel({ children, status, statusColor = "rgba(0,229,255,0.6)" }) {
   return (
     <div
@@ -105,15 +112,24 @@ function DetailRow({ label, value, accent }) {
   );
 }
 
-function NearbyObjectRow({ item }) {
+function NearbyObjectRow({ item, active, onClick }) {
   return (
-    <div
+    <button
+      type="button"
+      onClick={() => onClick?.(item.noradId)}
       style={{
+        width: "100%",
+        textAlign: "left",
         display: "grid",
         gridTemplateColumns: "minmax(0, 1fr) auto",
         gap: 12,
         padding: "9px 0",
         borderTop: "1px solid rgba(0,229,255,0.08)",
+        background: "transparent",
+        color: "inherit",
+        border: 0,
+        boxShadow: "none",
+        cursor: "pointer",
       }}
     >
       <div style={{ minWidth: 0 }}>
@@ -121,7 +137,7 @@ function NearbyObjectRow({ item }) {
           style={{
             fontSize: "0.56rem",
             letterSpacing: "0.05em",
-            color: "rgba(255,255,255,0.8)",
+            color: active ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.8)",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -134,11 +150,11 @@ function NearbyObjectRow({ item }) {
             marginTop: 3,
             fontSize: "0.46rem",
             letterSpacing: "0.08em",
-            color: getObjectTypeColor(item.objectType),
+            color: active ? "rgba(255,209,102,0.92)" : getObjectTypeColor(item.objectType),
             textTransform: "uppercase",
           }}
         >
-          {item.objectType}
+          {active ? `Highlighted | ${item.objectType}` : item.objectType}
         </div>
       </div>
       <div
@@ -150,10 +166,10 @@ function NearbyObjectRow({ item }) {
         <div
           style={{
             fontSize: "0.56rem",
-            color: "rgba(0,229,255,0.82)",
+            color: active ? "rgba(255,209,102,0.92)" : "rgba(0,229,255,0.82)",
           }}
         >
-          {item.currentSeparationKm} km
+          {item.minSeparationKm ?? item.currentSeparationKm} km
         </div>
         <div
           style={{
@@ -163,19 +179,55 @@ function NearbyObjectRow({ item }) {
             letterSpacing: "0.06em",
           }}
         >
-          dAlt {item.altitudeDeltaKm} km
+          {item.sampledTcaMinutes !== undefined && item.sampledTcaMinutes !== null
+            ? `T+${item.sampledTcaMinutes}m | dAlt ${item.altitudeDeltaKm} km`
+            : `dAlt ${item.altitudeDeltaKm} km`}
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
 export default function TacticalInsightPanel({
   target,
   analysis,
+  activePair,
+  comparedNoradId,
+  onCompareObject,
   onOpenAnalysis,
   onClearTarget,
 }) {
+  const effectiveRiskScore = activePair?.risk_score ?? analysis?.riskScore;
+  const effectiveRiskBand = activePair?.risk_band ?? analysis?.riskBand;
+  const effectiveRiskColor = activePair?.risk_color ?? (
+    activePair?.risk_band
+      ? riskBandColor(activePair.risk_band)
+      : analysis?.riskColor
+  );
+  const effectiveTca = activePair?.sampled_tca_minutes ?? analysis?.closestApproach?.sampledTcaMinutes;
+  const effectiveClosestPass = activePair?.min_separation_km ?? analysis?.closestApproach?.minSeparationKm;
+  const screenedObjects = analysis?.nearbyObjects || [];
+  const hasActivePairCounterpart = activePair
+    ? screenedObjects.some((item) => item.noradId === activePair.candidate_norad_id)
+    : true;
+  const visibleScreenedObjects = activePair && !hasActivePairCounterpart
+    ? [
+        {
+          objectName: activePair.candidate_name,
+          objectType: activePair.candidate_type,
+          noradId: activePair.candidate_norad_id,
+          currentSeparationKm: activePair.current_separation_km,
+          minSeparationKm: activePair.min_separation_km,
+          sampledTcaMinutes: activePair.sampled_tca_minutes,
+          pairRiskScore: activePair.risk_score,
+          pairRiskBand: activePair.risk_band,
+          pairRiskColor: activePair.risk_color ?? riskBandColor(activePair.risk_band),
+          altitudeDeltaKm: "--",
+        },
+        ...screenedObjects,
+      ]
+    : screenedObjects;
+
   return (
     <div
       className="slide-in-right"
@@ -215,7 +267,7 @@ export default function TacticalInsightPanel({
                 paddingRight: 2,
               }}
             >
-              <SectionLabel status={analysis.riskBand} statusColor={analysis.riskColor}>
+              <SectionLabel status={effectiveRiskBand} statusColor={effectiveRiskColor}>
                 Tactical Insight
               </SectionLabel>
 
@@ -264,7 +316,7 @@ export default function TacticalInsightPanel({
               </div>
 
               <div style={{ marginTop: 12 }}>
-                <SectionLabel status={`${analysis.riskScore}%`} statusColor={analysis.riskColor}>
+                <SectionLabel status={`${effectiveRiskScore}%`} statusColor={effectiveRiskColor}>
                   Risk Snapshot
                 </SectionLabel>
                 <div
@@ -276,25 +328,17 @@ export default function TacticalInsightPanel({
                 >
                   <StatGridCard
                     label="Risk Score"
-                    value={`${analysis.riskScore}%`}
-                    accent={analysis.riskColor}
+                    value={`${effectiveRiskScore}%`}
+                    accent={effectiveRiskColor}
                   />
                   <StatGridCard
                     label="Sampled TCA"
-                    value={
-                      analysis.closestApproach
-                        ? `T+${analysis.closestApproach.sampledTcaMinutes} min`
-                        : "Clear"
-                    }
+                    value={effectiveTca !== undefined && effectiveTca !== null ? `T+${effectiveTca} min` : "Clear"}
                     accent="rgba(255,209,102,0.9)"
                   />
                   <StatGridCard
                     label="Closest Pass"
-                    value={
-                      analysis.closestApproach
-                        ? `${analysis.closestApproach.minSeparationKm} km`
-                        : "> 500 km"
-                    }
+                    value={effectiveClosestPass !== undefined && effectiveClosestPass !== null ? `${effectiveClosestPass} km` : "> 500 km"}
                     accent="rgba(255,209,102,0.9)"
                   />
                   <StatGridCard
@@ -309,10 +353,10 @@ export default function TacticalInsightPanel({
                 style={{ marginTop: 12 }}
               >
                 <SectionLabel
-                  status={analysis.densityBand}
-                  statusColor="rgba(0,229,255,0.7)"
+                  status={comparedNoradId ? "COMPARE ACTIVE" : analysis.densityBand}
+                  statusColor={comparedNoradId ? "rgba(255,209,102,0.9)" : "rgba(0,229,255,0.7)"}
                 >
-                  Nearby Objects
+                  Screened Objects
                 </SectionLabel>
                 <div
                   style={{
@@ -322,11 +366,13 @@ export default function TacticalInsightPanel({
                     padding: "0 12px",
                   }}
                 >
-                  {analysis.nearbyObjects.length > 0 ? (
-                    analysis.nearbyObjects.map((item) => (
+                  {visibleScreenedObjects.length > 0 ? (
+                    visibleScreenedObjects.map((item) => (
                       <NearbyObjectRow
                         key={`${item.noradId}-${item.objectName}`}
                         item={item}
+                        active={comparedNoradId === item.noradId}
+                        onClick={onCompareObject}
                       />
                     ))
                   ) : (
@@ -337,7 +383,7 @@ export default function TacticalInsightPanel({
                         color: "rgba(200,214,229,0.34)",
                       }}
                     >
-                      No nearby tracked objects in the current screen.
+                      No screened conjunction candidates in the current window.
                     </div>
                   )}
                 </div>
@@ -350,7 +396,7 @@ export default function TacticalInsightPanel({
                   status={`${analysis.uncertaintyScore}%`}
                   statusColor="rgba(255,140,66,0.88)"
                 >
-                  Uncertainty Model
+                  Debris Environment Uncertainty
                 </SectionLabel>
                 <div
                   style={{
@@ -361,9 +407,17 @@ export default function TacticalInsightPanel({
                   }}
                 >
                   <DetailRow
-                    label="Debris Probability"
+                    label="Environment Score"
                     value={`${analysis.uncertaintyScore}%`}
                     accent="rgba(255,140,66,0.88)"
+                  />
+                  <DetailRow
+                    label="Anomaly Signal"
+                    value={`${analysis.uncertaintyComponents?.anomalyScore ?? 0}%`}
+                  />
+                  <DetailRow
+                    label="Altitude Band"
+                    value={`${analysis.uncertaintyComponents?.altitudeBandScore ?? 0}%`}
                   />
                   <DetailRow
                     label="Region Density"
@@ -465,8 +519,29 @@ export default function TacticalInsightPanel({
                 }}
               >
                 Select a tracked object to inspect risk score, closest screened approach,
-                nearby traffic, and debris uncertainty cues.
+                nearby traffic, compare objects, and debris uncertainty cues.
               </div>
+
+              {activePair ? (
+                <div style={{ marginTop: 12 }}>
+                  <SectionLabel status="Pair Locked" statusColor="rgba(0,229,255,0.74)">
+                    Active Pair
+                  </SectionLabel>
+                  <div
+                    style={{
+                      borderRadius: 8,
+                      border: "1px solid rgba(0,229,255,0.1)",
+                      background: "rgba(11,15,20,0.52)",
+                      padding: "11px 12px",
+                    }}
+                  >
+                    <DetailRow label="Target" value={activePair.target_name} />
+                    <DetailRow label="Counterpart" value={activePair.candidate_name} accent={getObjectTypeColor(activePair.candidate_type)} />
+                    <DetailRow label="Pair Risk" value={`${activePair.risk_score}%`} accent={effectiveRiskColor} />
+                    <DetailRow label="Pair TCA" value={`T+${activePair.sampled_tca_minutes} min`} />
+                  </div>
+                </div>
+              ) : null}
             </div>
           </>
         )}

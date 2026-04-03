@@ -81,8 +81,30 @@ export default function LayerControls({
   satTypeConfig,
   datasetStats,
   topOffset = 208,
+  layerVisibility = {},
+  onToggleLayer,
 }) {
   const activeCount = satTypeConfig.filter((cfg) => satTypes[cfg.id]).length;
+  const layerConfigs = [
+    {
+      id: "uncertaintyZones",
+      shortLabel: "UNC",
+      label: "Uncertainty Zones",
+      desc: "Density shells for fragment-rich orbital bands",
+    },
+    {
+      id: "riskAlerts",
+      shortLabel: "ALR",
+      label: "Risk Alerts",
+      desc: "Live conjunction queue for highest-risk tracked pairs",
+    },
+    {
+      id: "orbitalPaths",
+      shortLabel: "ORB",
+      label: "Orbital Paths",
+      desc: "Past and future selected-target trajectories",
+    },
+  ];
 
   return (
     <div
@@ -149,6 +171,50 @@ export default function LayerControls({
               config={cfg}
               active={!!satTypes[cfg.id]}
               onClick={() => onToggleSatType(cfg.id)}
+            />
+          ))}
+        </div>
+
+        <div
+          style={{
+            marginTop: 12,
+            padding: "10px 4px 8px",
+            borderTop: "1px solid rgba(0,229,255,0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
+          <span
+            style={{
+              fontSize: "0.55rem",
+              letterSpacing: "0.22em",
+              color: "var(--text-dim)",
+              textTransform: "uppercase",
+            }}
+          >
+            Analytic Layers
+          </span>
+          <span
+            style={{
+              fontSize: "0.44rem",
+              letterSpacing: "0.14em",
+              color: "rgba(0,229,255,0.55)",
+              textTransform: "uppercase",
+            }}
+          >
+            {datasetStats.source}
+          </span>
+        </div>
+
+        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+          {layerConfigs.map((cfg) => (
+            <LayerChip
+              key={cfg.id}
+              config={cfg}
+              active={Boolean(layerVisibility[cfg.id])}
+              onClick={() => onToggleLayer?.(cfg.id)}
             />
           ))}
         </div>

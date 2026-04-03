@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 const TIMELINE_DURATION_MS = 20000;
+const SIM_WINDOW_HOURS = 6;
 const TIMELINE_MARKERS = [
   { position: 0.14, color: "#00e5ff" },
   { position: 0.08, color: "#6fdcff" },
@@ -13,10 +14,10 @@ const TIMELINE_MARKERS = [
 ];
 
 function formatSimTime(progress) {
-  const totalSeconds = Math.round(progress * 3600);
-  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return `${minutes}:${seconds}`;
+  const totalMinutes = Math.round(progress * SIM_WINDOW_HOURS * 60);
+  const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const minutes = String(totalMinutes % 60).padStart(2, "0");
+  return `${hours}:${minutes}`;
 }
 
 function CompactChip({
@@ -165,9 +166,14 @@ export default function BottomBar({
   onSimSpeedChange,
   onSimAddSatellite,
   onSimTriggerCollision,
+  onStartCollisionSimulation,
   onSimReset,
   onOpenAnalysis,
   analysisAvailable,
+  simActionPending = false,
+  simProgressRef,
+  onSimProgressChange,
+  activeScenario = null,
 }) {
   const [timelineProgress, setTimelineProgress] = useState(0);
   const rafRef = useRef(null);
@@ -197,7 +203,12 @@ export default function BottomBar({
     const tick = (now) => {
       const delta = now - last;
       last = now;
-      setTimelineProgress((prev) => (prev + delta / duration) % 1);
+      setTimelineProgress((prev) => {
+        const next = (prev + delta / duration) % 1;
+        if (simProgressRef) simProgressRef.current = next;
+        onSimProgressChange?.(next);
+        return next;
+      });
       rafRef.current = requestAnimationFrame(tick);
     };
 
@@ -209,7 +220,7 @@ export default function BottomBar({
         rafRef.current = null;
       }
     };
-  }, [simRunning, simSpeed]);
+  }, [onSimProgressChange, simRunning, simSpeed, simProgressRef]);
 
   const handlePlayPause = () => {
     if (simRunning) {
@@ -221,12 +232,20 @@ export default function BottomBar({
 
   const handleSeek = (ratio) => {
     setTimelineProgress(ratio);
+    if (simProgressRef) simProgressRef.current = ratio;
+    onSimProgressChange?.(ratio);
   };
 
   const handleReset = () => {
     setTimelineProgress(0);
+    if (simProgressRef) simProgressRef.current = 0;
+    onSimProgressChange?.(0);
     onSimReset();
   };
+  const collisionReady =
+    activeScenario?.kind === "collision" && !activeScenario?.collisionStarted;
+  const collisionActive =
+    activeScenario?.kind === "collision" && activeScenario?.collisionStarted;
 
   return (
     <div
@@ -363,15 +382,31 @@ export default function BottomBar({
               justifyContent: "flex-end",
             }}
           >
-            <CompactChip label="Inject Risk" onClick={onSimTriggerCollision} tone="warning" />
-            <CompactChip label="Add Satellite" onClick={onSimAddSatellite} />
+            <CompactChip
+              label={simActionPending ? "Working" : "Inject Risk"}
+              onClick={onSimTriggerCollision}
+              tone="warning"
+              disabled={simActionPending}
+            />
+            <CompactChip
+              label={collisionActive ? "Collision Live" : "Start Collision"}
+              onClick={onStartCollisionSimulation}
+              tone="warning"
+              active={collisionActive}
+              disabled={simActionPending || !collisionReady}
+            />
+            <CompactChip
+              label={simActionPending ? "Working" : "Add Satellite"}
+              onClick={onSimAddSatellite}
+              disabled={simActionPending}
+            />
             <CompactChip
               label="Open Analysis"
               onClick={onOpenAnalysis}
               active={analysisAvailable}
               disabled={!analysisAvailable}
             />
-            <CompactChip label="Reset" onClick={handleReset} />
+            <CompactChip label="Reset" onClick={handleReset} disabled={simActionPending} />
           </div>
         </div>
       </div>

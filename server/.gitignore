@@ -1,1 +1,10 @@
-tle_cache.json
+# Default server ignores
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+
+# TLE Caches
+tle_cache*.json

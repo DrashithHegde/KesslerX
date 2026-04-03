@@ -22,6 +22,10 @@ body,
   background: #0b0f14;
 }
 
+html {
+  font-size: 24px;
+}
+
 body {
   font-family: 'DM Mono', monospace;
   cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http://www.w3.org/2000/svg%27%20width%3D%2720%27%20height%3D%2720%27%20viewBox%3D%270%200%2032%2032%27%3E%3Cpath%20d%3D%27M4%203%20L4%2024%20L8.6%2019.4%20L12.5%2029%20L16.5%2027.2%20L12.7%2018.1%20L20%2018.1%20Z%27%20fill%3D%27%23050505%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%271.6%27%20stroke-linejoin%3D%27round%27/%3E%3C/svg%3E") 0 0, default;

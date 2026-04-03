@@ -1,36 +1,27 @@
-import { formatUtc } from "../../utils/orbitalAnalysis";
-
-export default function OrbitalPass({ analysis }) {
-  const now = new Date();
-  const dateStr = now.toISOString().split("T")[0];
+export default function OrbitalPass({ analysis, simTimestamp }) {
+  const now = simTimestamp ? new Date(simTimestamp) : new Date();
   const timeStr = now.toISOString().split("T")[1].slice(0, 8);
 
   return (
     <div
       style={{
         position: "fixed",
-        top: 100,
-        right: 12,
+        top: 88,
+        right: 22,
         zIndex: 20,
         fontFamily: "'DM Mono', monospace",
-        fontSize: "0.65rem",
-        letterSpacing: "0.15em",
-        color: "rgba(217,127,42,0.75)",
-        textShadow: "0 0 8px rgba(217, 127, 42, 0.5)",
+        fontSize: "0.5rem",
+        letterSpacing: "0.12em",
+        color: "rgba(200,214,229,0.4)",
         pointerEvents: "none",
-        lineHeight: 1.6,
         textAlign: "right",
+        padding: "6px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(0,229,255,0.08)",
+        background: "rgba(11,15,20,0.5)",
       }}
     >
-      <div style={{ fontSize: "0.55rem", opacity: 0.85, marginBottom: 6, animation: "digitalFlicker 1.8s ease-in-out infinite", animationDelay: "0s" }}>
-        SCAN {dateStr} {timeStr}Z
-      </div>
-      <div style={{ fontSize: "0.55rem", opacity: 0.85, marginBottom: 3, animation: "digitalFlicker 1.8s ease-in-out infinite", animationDelay: "0.2s" }}>
-        SCREEN WINDOW: 90MIN PASS: ACTIVE-526
-      </div>
-      <div style={{ fontSize: "0.55rem", opacity: 0.85, animation: "digitalFlicker 1.8s ease-in-out infinite", animationDelay: "0.4s" }}>
-        {analysis ? `LAST BRIEF ${formatUtc(analysis.sampledAt)}` : "TRACKED OBJECT FEED NOMINAL"}
-      </div>
+      {analysis ? `Screen window 90m • brief ${timeStr}Z` : "Tracked feed nominal"}
     </div>
   );
 }

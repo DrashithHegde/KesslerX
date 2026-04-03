@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import { formatUtc, getObjectTypeColor } from "../../utils/orbitalAnalysis";
 import TrendSparkline from "../ui/TrendSparkline";
 
@@ -102,7 +102,54 @@ function StatRow({ label, value }) {
   );
 }
 
-function DeepAnalysisOverlay({ target, analysis, isOpen, onClose }) {
+function DeepAnalysisOverlay({ target, analysis, isOpen, onClose, simTimestamp }) {
+  const [ragExplanation, setRagExplanation] = useState(null);
+  const [isRagLoading, setIsRagLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !target || !analysis) {
+      setRagExplanation(null);
+      return;
+    }
+
+    const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
+    let isMounted = true;
+    
+    const fetchExplanation = async () => {
+      setIsRagLoading(true);
+      try {
+        const payload = {
+          norad_id: target.details.NORAD_CAT_ID,
+          object_name: target.details.OBJECT_NAME,
+          min_separation_km: analysis.closestApproach ? analysis.closestApproach.minSeparationKm : null,
+          uncertainty_score: analysis.uncertaintyScore,
+          risk_band: analysis.riskBand,
+          regime: analysis.regime,
+        };
+        const res = await fetch(`${apiBaseUrl}/analysis/explain`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (isMounted) {
+            setRagExplanation(data.explanation || data.detail || "RAG explanation returned empty.");
+        }
+      } catch (err) {
+        if (isMounted) {
+            setRagExplanation("Failed to connect to KesslerX AI backend: " + err.message);
+        }
+      } finally {
+        if (isMounted) {
+            setIsRagLoading(false);
+        }
+      }
+    };
+
+    fetchExplanation();
+    return () => { isMounted = false; };
+  }, [isOpen, target, analysis]);
+
   if (!isOpen || !target || !analysis) return null;
 
   const typeColor = getObjectTypeColor(target.type);
@@ -226,7 +273,7 @@ function DeepAnalysisOverlay({ target, analysis, isOpen, onClose }) {
             accent="rgba(0,229,255,0.82)"
           />
           <MetricCard
-            label="Uncertainty Score"
+            label="Debris Environment Uncertainty"
             value={`${analysis.uncertaintyScore}%`}
             accent="rgba(255,140,66,0.9)"
           />
@@ -241,16 +288,23 @@ function DeepAnalysisOverlay({ target, analysis, isOpen, onClose }) {
           }}
         >
           <div className="glass" style={{ padding: 14, borderRadius: 10 }}>
-            <SectionLabel>Operational Brief</SectionLabel>
+            <SectionLabel>AI Operational Brief</SectionLabel>
             <div
               style={{
                 fontSize: "0.66rem",
                 color: "var(--text)",
                 lineHeight: 1.6,
                 letterSpacing: "0.04em",
+                whiteSpace: "pre-wrap",
               }}
             >
-              {analysis.summary}
+              {isRagLoading ? (
+                  <span className="pulse" style={{ color: "rgba(0,229,255,0.7)" }}>Synthesizing RAG mitigation strategy...</span>
+              ) : ragExplanation ? (
+                  ragExplanation
+              ) : (
+                  analysis.summary
+              )}
             </div>
 
             <div
@@ -264,6 +318,7 @@ function DeepAnalysisOverlay({ target, analysis, isOpen, onClose }) {
               }}
             >
               <StatRow label="Sampled At" value={formatUtc(analysis.sampledAt)} />
+              <StatRow label="Simulated Time" value={simTimestamp ? formatUtc(simTimestamp) : "--"} />
               <StatRow label="Latitude" value={`${currentState.latitudeDeg} deg`} />
               <StatRow label="Longitude" value={`${currentState.longitudeDeg} deg`} />
               <StatRow label="Launch Age" value={analysis.launchAgeYears ? `${analysis.launchAgeYears} yr` : "--"} />
@@ -300,18 +355,45 @@ function DeepAnalysisOverlay({ target, analysis, isOpen, onClose }) {
               <span>SCREENED RISK PROFILE</span>
               <span>T+90M</span>
             </div>
-            <div
-              style={{
-                marginTop: 14,
-                fontSize: "0.6rem",
-                color: "var(--text-dim)",
-                lineHeight: 1.6,
-                letterSpacing: "0.05em",
-              }}
-            >
-              {analysis.note}
-            </div>
+
           </div>
+        </div>
+
+        <div className="glass" style={{ marginTop: 16, padding: 14, borderRadius: 10 }}>
+          <SectionLabel>Rule-Based Mitigation</SectionLabel>
+          {analysis.mitigations?.length ? (
+            <ul style={{ listStyle: "none", display: "grid", gap: 8 }}>
+              {analysis.mitigations.map((item) => (
+                <li
+                  key={item}
+                  style={{
+                    fontSize: "0.62rem",
+                    color: "var(--text)",
+                    lineHeight: 1.5,
+                    letterSpacing: "0.04em",
+                    paddingLeft: 12,
+                    position: "relative",
+                  }}
+                >
+                  <span
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
+                      color: "rgba(255,209,102,0.82)",
+                    }}
+                  >
+                    *
+                  </span>
+                  {item}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", letterSpacing: "0.05em" }}>
+              No rule-based mitigations generated for the current screening state.
+            </div>
+          )}
         </div>
 
         <div className="glass" style={{ marginTop: 16, padding: 14, borderRadius: 10 }}>
@@ -333,6 +415,7 @@ function DeepAnalysisOverlay({ target, analysis, isOpen, onClose }) {
               <StatRow label="Current Separation" value={`${closestApproach.currentSeparationKm} km`} />
               <StatRow label="Min Separation" value={`${closestApproach.minSeparationKm} km`} />
               <StatRow label="Sampled TCA" value={`T+${closestApproach.sampledTcaMinutes} min`} />
+              <StatRow label="Pair Risk" value={`${closestApproach.pairRiskScore ?? analysis.riskScore}%`} />
             </div>
           ) : (
             <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", letterSpacing: "0.05em" }}>
@@ -340,8 +423,7 @@ function DeepAnalysisOverlay({ target, analysis, isOpen, onClose }) {
             </div>
           )}
 
-          <ListBlock title="Likely Drivers" items={analysis.drivers} />
-          <ListBlock title="Mitigation Actions" items={analysis.mitigations} />
+
         </div>
       </div>
     </div>
@@ -352,7 +434,8 @@ function areEqual(prevProps, nextProps) {
   return (
     prevProps.isOpen === nextProps.isOpen &&
     prevProps.target === nextProps.target &&
-    prevProps.analysis === nextProps.analysis
+    prevProps.analysis === nextProps.analysis &&
+    prevProps.simTimestamp === nextProps.simTimestamp
   );
 }
 
