@@ -27,7 +27,7 @@ export const SAT_TYPE_CONFIG = [
 
 export function createSatTypeState() {
   return SAT_TYPE_CONFIG.reduce((state, item) => {
-    state[item.id] = true;
+    state[item.id] = false;
     return state;
   }, {});
 }
