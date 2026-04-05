@@ -35,9 +35,14 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       target: "esnext",
+      rollupOptions: {
+        input: {
+          main: path.resolve(__dirname, "index.html"),
+        },
+      },
     },
     server: {
-      open: true,
+      open: "/",
       proxy: {
         "/api": {
           target: devApiTarget,
