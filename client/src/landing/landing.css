@@ -20,12 +20,24 @@ body,
     background: var(--bg);
 }
 
+html.kx-landing-route,
+body.kx-landing-route,
+body.kx-landing-route #root {
+    height: 100% !important;
+    min-height: 100% !important;
+    overflow: hidden !important;
+    scroll-behavior: smooth;
+}
+
 .kx-root {
     background-color: var(--bg);
     color: var(--text);
-    min-height: 100vh;
+    min-height: 100%;
+    height: 100%;
     position: relative;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     font-family: "IBM Plex Mono", monospace;
 }
 
@@ -829,11 +841,14 @@ body,
 }
 
 .kx-cta {
-    padding: 120px 0 160px;
+    padding: 108px 0 132px;
     text-align: center;
-    min-height: 70vh;
+    min-height: auto;
+    display: block;
+}
+
+.kx-cta .kx-container {
     display: flex;
-    align-items: center;
     justify-content: center;
 }
 
@@ -842,8 +857,9 @@ body,
     overflow: hidden;
     border: 1px solid rgba(0, 209, 255, 0.2);
     background: var(--panel-bg);
-    padding: 52px;
-    max-width: 720px;
+    padding: clamp(30px, 4vw, 52px);
+    width: min(720px, 100%);
+    max-width: 100%;
     margin: 0 auto;
     border-radius: 10px;
     box-shadow: var(--panel-shadow);
@@ -915,8 +931,8 @@ body,
 }
 
 [data-reveal] {
-    opacity: 0;
-    transform: translateY(24px);
+    opacity: 1;
+    transform: none;
     transition: opacity 1.2s ease, transform 1.2s ease;
 }
 

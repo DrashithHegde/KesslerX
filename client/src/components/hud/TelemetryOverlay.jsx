@@ -1,8 +1,15 @@
-export default function TelemetryOverlay({ analysis, datasetStats }) {
+export default function TelemetryOverlay({ analysis, datasetStats, activePair, activeScenario }) {
   const altitude = analysis?.currentState?.altitudeKm;
   const speed = analysis?.currentState?.speedKps;
   const regime = analysis?.regime;
-  const tca = analysis?.closestApproach?.sampledTcaMinutes;
+  const tca = activePair?.sampled_tca_minutes ?? analysis?.closestApproach?.sampledTcaMinutes;
+  const pairLabel = activePair ? `${activePair.target_name} VS ${activePair.candidate_name}` : null;
+  const scenarioLabel = activeScenario
+    ? activeScenario.kind === "collision"
+      ? `${activeScenario.collisionStarted ? "SCENARIO COLLISION LIVE" : "SCENARIO COLLISION READY"
+      } | FRAG ${activeScenario.fragmentIds?.length ?? 0}`
+      : `SCENARIO PROX | SYNTH ${activeScenario.compareName || "--"}`
+    : null;
 
   return (
     <div
@@ -24,7 +31,6 @@ export default function TelemetryOverlay({ analysis, datasetStats }) {
       <div
         style={{
           fontSize: "0.55rem",
-          animation: "glowPulse 3s ease-in-out infinite",
         }}
       >
         TRACKED: {datasetStats.totalTracked} DEBRIS: {datasetStats.byType.DEBRIS}
@@ -32,7 +38,6 @@ export default function TelemetryOverlay({ analysis, datasetStats }) {
       <div
         style={{
           fontSize: "0.55rem",
-          animation: "fadeFlicker 2.5s ease-in-out infinite",
         }}
       >
         {analysis
@@ -42,7 +47,6 @@ export default function TelemetryOverlay({ analysis, datasetStats }) {
       <div
         style={{
           fontSize: "0.55rem",
-          animation: "fadeFlicker 2.7s ease-in-out infinite",
         }}
       >
         {analysis

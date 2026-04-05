@@ -3,10 +3,23 @@ export default function TopBar({
   datasetStats,
   selectedTarget,
   analysisSnapshot,
+  activePair,
+  activeScenario,
+  simOffsetHours = 0,
 }) {
   const selectedLabel = selectedTarget?.details?.OBJECT_NAME || "NO TARGET LOCK";
-  const riskLabel = analysisSnapshot?.riskBand || "STANDBY";
-  const riskColor = analysisSnapshot?.riskColor || "rgba(0,229,255,0.55)";
+  const riskLabel = activePair?.risk_band || analysisSnapshot?.riskBand || "STANDBY";
+  const riskColor = activePair?.risk_color
+    || (activePair?.risk_band
+      ? activePair.risk_band === "SEVERE"
+        ? "#ff5f57"
+        : activePair.risk_band === "HIGH"
+          ? "#ff8c42"
+          : activePair.risk_band === "ELEVATED"
+            ? "#ffd166"
+            : "#00d1ff"
+      : analysisSnapshot?.riskColor || "rgba(0,229,255,0.55)");
+  const riskChip = activePair ? `Risk ${activePair.risk_score}% ${riskLabel}` : `Risk ${riskLabel}`;
   const datasetLabel =
     datasetStats.status === "error"
       ? "DATA LINK DEGRADED"

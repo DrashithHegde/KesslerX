@@ -1,4 +1,4 @@
-export default function StatusBar({ recTime, datasetStats, selectedTarget }) {
+export default function StatusBar({ recTime, datasetStats, selectedTarget, alertCount = 0 }) {
   const byType = datasetStats.byType || {};
 
   return (
@@ -45,7 +45,7 @@ export default function StatusBar({ recTime, datasetStats, selectedTarget }) {
       </div>
 
       <div>
-        TRACKED {datasetStats.totalTracked} | PAYLOAD {byType.PAYLOAD || 0} | DEBRIS {byType.DEBRIS || 0} | R/B {byType["ROCKET BODY"] || 0} | OTHER {byType.OTHER || 0} | {recTime}
+        SRC {String(datasetStats.source || "spacetrack").toUpperCase()} | ALERTS {alertCount} | TRACKED {datasetStats.totalTracked} | PAYLOAD {byType.PAYLOAD || 0} | DEBRIS {byType.DEBRIS || 0} | R/B {byType["ROCKET BODY"] || 0} | {recTime}
       </div>
     </div>
   );

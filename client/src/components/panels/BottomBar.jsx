@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 const TIMELINE_DURATION_MS = 20000;
+const SIM_WINDOW_HOURS = 6;
 const TIMELINE_MARKERS = [
   { position: 0.14, color: "#00e5ff" },
   { position: 0.08, color: "#6fdcff" },
@@ -13,10 +14,10 @@ const TIMELINE_MARKERS = [
 ];
 
 function formatSimTime(progress) {
-  const totalSeconds = Math.round(progress * 3600);
-  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return `${minutes}:${seconds}`;
+  const totalMinutes = Math.round(progress * SIM_WINDOW_HOURS * 60);
+  const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+  const minutes = String(totalMinutes % 60).padStart(2, "0");
+  return `${hours}:${minutes}`;
 }
 
 function CompactChip({
@@ -29,31 +30,31 @@ function CompactChip({
 }) {
   const palette = disabled
     ? {
-        border: "1px solid rgba(0,229,255,0.08)",
-        background: "rgba(11,15,20,0.44)",
-        color: "rgba(200,214,229,0.24)",
-        shadow: "none",
-      }
+      border: "1px solid rgba(0,229,255,0.08)",
+      background: "rgba(11,15,20,0.44)",
+      color: "rgba(200,214,229,0.24)",
+      shadow: "none",
+    }
     : tone === "warning"
       ? {
-          border: "1px solid rgba(0,229,255,0.28)",
-          background: "rgba(0,229,255,0.08)",
-          color: "rgba(0,229,255,0.86)",
-          shadow: "0 0 12px rgba(0,229,255,0.1)",
-        }
+        border: "1px solid rgba(0,229,255,0.28)",
+        background: "rgba(0,229,255,0.08)",
+        color: "rgba(0,229,255,0.86)",
+        shadow: "0 0 12px rgba(0,229,255,0.1)",
+      }
       : active
         ? {
-            border: "1px solid rgba(0,229,255,0.42)",
-            background: "rgba(0,229,255,0.1)",
-            color: "rgba(0,229,255,0.9)",
-            shadow: "0 0 14px rgba(0,229,255,0.12), inset 0 0 8px rgba(0,229,255,0.05)",
-          }
+          border: "1px solid rgba(0,229,255,0.42)",
+          background: "rgba(0,229,255,0.1)",
+          color: "rgba(0,229,255,0.9)",
+          shadow: "0 0 14px rgba(0,229,255,0.12), inset 0 0 8px rgba(0,229,255,0.05)",
+        }
         : {
-            border: "1px solid rgba(0,229,255,0.12)",
-            background: "rgba(11,15,20,0.72)",
-            color: "rgba(200,214,229,0.62)",
-            shadow: "none",
-          };
+          border: "1px solid rgba(0,229,255,0.12)",
+          background: "rgba(11,15,20,0.72)",
+          color: "rgba(200,214,229,0.62)",
+          shadow: "none",
+        };
 
   return (
     <button
@@ -162,15 +163,22 @@ export default function BottomBar({
   simSpeed,
   onSimStart,
   onSimPause,
+  onSimComplete,
   onSimSpeedChange,
   onSimAddSatellite,
   onSimTriggerCollision,
+  onStartCollisionSimulation,
   onSimReset,
   onOpenAnalysis,
   analysisAvailable,
+  simActionPending = false,
+  simProgressRef,
+  onSimProgressChange,
+  activeScenario = null,
 }) {
   const [timelineProgress, setTimelineProgress] = useState(0);
   const rafRef = useRef(null);
+  const hasCompletedRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -188,6 +196,9 @@ export default function BottomBar({
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
+      if (timelineProgress < 1) {
+        hasCompletedRef.current = false;
+      }
       return undefined;
     }
 
@@ -197,8 +208,33 @@ export default function BottomBar({
     const tick = (now) => {
       const delta = now - last;
       last = now;
-      setTimelineProgress((prev) => (prev + delta / duration) % 1);
-      rafRef.current = requestAnimationFrame(tick);
+
+      let shouldContinue = true;
+      setTimelineProgress((prev) => {
+        const next = Math.min(prev + delta / duration, 1);
+        if (simProgressRef) simProgressRef.current = next;
+        onSimProgressChange?.(next);
+
+        if (next >= 1) {
+          shouldContinue = false;
+        }
+
+        return next;
+      });
+
+      if (shouldContinue) {
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      if (!hasCompletedRef.current) {
+        hasCompletedRef.current = true;
+        onSimComplete?.();
+      }
     };
 
     rafRef.current = requestAnimationFrame(tick);
@@ -209,7 +245,7 @@ export default function BottomBar({
         rafRef.current = null;
       }
     };
-  }, [simRunning, simSpeed]);
+  }, [onSimComplete, onSimProgressChange, simRunning, simSpeed, simProgressRef, timelineProgress]);
 
   const handlePlayPause = () => {
     if (simRunning) {
@@ -220,13 +256,25 @@ export default function BottomBar({
   };
 
   const handleSeek = (ratio) => {
+    if (ratio < 1) {
+      hasCompletedRef.current = false;
+    }
     setTimelineProgress(ratio);
+    if (simProgressRef) simProgressRef.current = ratio;
+    onSimProgressChange?.(ratio);
   };
 
   const handleReset = () => {
+    hasCompletedRef.current = false;
     setTimelineProgress(0);
+    if (simProgressRef) simProgressRef.current = 0;
+    onSimProgressChange?.(0);
     onSimReset();
   };
+  const collisionReady =
+    activeScenario?.kind === "collision" && !activeScenario?.collisionStarted;
+  const collisionActive =
+    activeScenario?.kind === "collision" && activeScenario?.collisionStarted;
 
   return (
     <div
@@ -363,15 +411,31 @@ export default function BottomBar({
               justifyContent: "flex-end",
             }}
           >
-            <CompactChip label="Inject Risk" onClick={onSimTriggerCollision} tone="warning" />
-            <CompactChip label="Add Satellite" onClick={onSimAddSatellite} />
+            <CompactChip
+              label={simActionPending ? "Working" : "Inject Risk"}
+              onClick={onSimTriggerCollision}
+              tone="warning"
+              disabled={simActionPending}
+            />
+            <CompactChip
+              label={collisionActive ? "Collision Live" : "Start Collision"}
+              onClick={onStartCollisionSimulation}
+              tone="warning"
+              active={collisionActive}
+              disabled={simActionPending || !collisionReady}
+            />
+            <CompactChip
+              label={simActionPending ? "Working" : "Add Satellite"}
+              onClick={onSimAddSatellite}
+              disabled={simActionPending}
+            />
             <CompactChip
               label="Open Analysis"
               onClick={onOpenAnalysis}
               active={analysisAvailable}
               disabled={!analysisAvailable}
             />
-            <CompactChip label="Reset" onClick={handleReset} />
+            <CompactChip label="Reset" onClick={handleReset} disabled={simActionPending} />
           </div>
         </div>
       </div>

@@ -17,12 +17,6 @@ export const SAT_TYPE_CONFIG = [
     shortLabel: "DEB",
     desc: "Tracked breakup fragments and debris objects",
   },
-  {
-    id: "OTHER",
-    label: "Other",
-    shortLabel: "UNK",
-    desc: "Unclassified or uncategorized objects",
-  },
 ];
 
 export function createSatTypeState() {

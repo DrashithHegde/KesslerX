@@ -64,10 +64,8 @@ export const CRTEarthFragmentShader = `
     float grainVal = hash(vUv * 800.0 + uTime * 2.0) * 2.0 - 1.0;
     color += grainVal * uGrainIntensity;
 
-    // ── Atmospheric edge glow — soft blue-white rim ──
+    // ── Atmospheric edge glow removed for clean rim ──
     float fresnel = 1.0 - max(dot(normalize(-vPosition), vNormal), 0.0);
-    float atmosphere = pow(fresnel, 3.0) * 0.4;
-    color += vec3(0.3, 0.5, 0.9) * atmosphere;
 
     // ── Vignette on sphere edges ──
     float vignette = 1.0 - pow(fresnel, 4.0) * uVignetteStrength;

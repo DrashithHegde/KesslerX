@@ -4,3 +4,12 @@ pydantic-settings==2.8.1
 python-dotenv==1.0.1
 httpx==0.28.1
 sgp4==2.23
+redis>=5.0.3
+numpy
+scikit-learn
+langchain
+langchain-openai
+langchain-google-genai
+faiss-cpu
+openai
+

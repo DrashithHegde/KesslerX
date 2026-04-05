@@ -142,6 +142,36 @@ function separationRiskScore(separationKm) {
   return 14;
 }
 
+function pairSeparationScore(separationKm) {
+  if (!Number.isFinite(separationKm) || separationKm <= 0) return 0;
+  return clamp(100 * Math.exp(-separationKm / 250), 0, 100);
+}
+
+function pairTimingScore(sampledTcaMinutes) {
+  if (!Number.isFinite(sampledTcaMinutes)) return 0;
+  return clamp(18 - sampledTcaMinutes * 0.18, 0, 18);
+}
+
+function buildPairRiskScore({ target, candidateType, minSeparationKm, sampledTcaMinutes, altitudeDeltaKm }) {
+  const consequenceScore =
+    target.type === "PAYLOAD" ? 6 : target.type === "ROCKET BODY" ? 4 : 2;
+  const debrisPenalty = candidateType === "DEBRIS" ? 2 : 0;
+  const altitudeScore = clamp(14 - altitudeDeltaKm * 0.08, 0, 14);
+
+  return round(
+    clamp(
+      pairSeparationScore(minSeparationKm) +
+        pairTimingScore(sampledTcaMinutes) * 0.35 +
+        altitudeScore * 0.25 +
+        consequenceScore +
+        debrisPenalty,
+      0,
+      100
+    ),
+    1
+  );
+}
+
 function candidateScore(targetState, candidateState) {
   const altitudeDelta = Math.abs(candidateState.altitudeKm - targetState.altitudeKm);
   const separation = distanceKm(targetState.position, candidateState.position);
@@ -273,14 +303,16 @@ export function buildDatasetStats(records, datasetMeta = {}) {
     cacheAgeSeconds: datasetMeta.cacheAgeSeconds ?? null,
     generatedAt: datasetMeta.generatedAt ?? null,
     fetchWindowOpen: datasetMeta.fetchWindowOpen ?? null,
+    source: datasetMeta.source ?? "unknown",
     error: datasetMeta.error ?? null,
   };
 }
 
-export function buildTargetAnalysis(target, records) {
+export function buildTargetAnalysis(target, records, referenceDate = new Date()) {
   if (!target?.satrec) return null;
 
-  const now = new Date();
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  if (Number.isNaN(now.getTime())) return null;
   const targetNow = getPropagationSnapshot(target.satrec, now);
   if (!targetNow) return null;
 
@@ -312,17 +344,6 @@ export function buildTargetAnalysis(target, records) {
   const closeShellCount = candidateStates.filter(
     (candidate) => candidate.altitudeDeltaKm <= 50
   ).length;
-  const nearbyObjects = [...candidateStates]
-    .sort((left, right) => left.currentSeparationKm - right.currentSeparationKm)
-    .slice(0, 3)
-    .map((candidate) => ({
-      objectName: candidate.target.details.OBJECT_NAME || "UNKNOWN OBJECT",
-      objectType: candidate.target.type,
-      noradId: candidate.target.details.NORAD_CAT_ID,
-      currentSeparationKm: candidate.currentSeparationKm,
-      altitudeDeltaKm: candidate.altitudeDeltaKm,
-    }));
-
   const shortlist = [...candidateStates]
     .sort(
       (left, right) =>
@@ -340,6 +361,7 @@ export function buildTargetAnalysis(target, records) {
 
   let closestApproach = null;
   const riskTimeline = screeningTimes.map(() => 0);
+  const screenedCandidates = [];
 
   for (const candidate of shortlist) {
     let candidateBest = null;
@@ -359,6 +381,13 @@ export function buildTargetAnalysis(target, records) {
       riskTimeline[index] = Math.max(riskTimeline[index], separationRiskScore(separationKm));
 
       if (!candidateBest || separationKm < candidateBest.minSeparationKm) {
+        const pairRiskScore = buildPairRiskScore({
+          target,
+          candidateType: candidate.target.type,
+          minSeparationKm: separationKm,
+          sampledTcaMinutes: screeningTimes[index],
+          altitudeDeltaKm: candidate.altitudeDeltaKm,
+        });
         candidateBest = {
           objectName: candidate.target.details.OBJECT_NAME || "UNKNOWN OBJECT",
           objectType: candidate.target.type,
@@ -367,8 +396,15 @@ export function buildTargetAnalysis(target, records) {
           minSeparationKm: separationKm,
           sampledTcaMinutes: screeningTimes[index],
           altitudeDeltaKm: candidate.altitudeDeltaKm,
+          pairRiskScore,
+          pairRiskBand: getRiskBand(pairRiskScore),
+          pairRiskColor: getRiskColor(pairRiskScore),
         };
       }
+    }
+
+    if (candidateBest) {
+      screenedCandidates.push(candidateBest);
     }
 
     if (
@@ -380,10 +416,19 @@ export function buildTargetAnalysis(target, records) {
     }
   }
 
-  const shellDensityScore = clamp(closeShellCount * 2.8 + shellPopulation.length * 0.6, 0, 34);
+  const nearbyObjects = screenedCandidates
+    .sort((left, right) => {
+      if (left.minSeparationKm !== right.minSeparationKm) {
+        return left.minSeparationKm - right.minSeparationKm;
+      }
+      return left.currentSeparationKm - right.currentSeparationKm;
+    })
+    .slice(0, 4);
+
+  const shellDensityScore = clamp(closeShellCount * 0.12 + shellPopulation.length * 0.03, 0, 34);
   const uncertaintyScore = clamp(
     18 +
-      shellPopulation.length * 0.55 +
+      shellPopulation.length * 0.02 +
       (shellPopulation.length > 0
         ? (shellDebrisCount / shellPopulation.length) * 48
         : 0),

@@ -22,26 +22,55 @@ export function useClock() {
 export function useToast(duration = 1500) {
   const [message, setMessage] = useState(null);
   const [phase, setPhase] = useState("in");
-  const timerRef = useRef(null);
+  const hideTimerRef = useRef(null);
+  const clearTimerRef = useRef(null);
+  const tokenRef = useRef(0);
+
+  const clearTimers = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    if (clearTimerRef.current) {
+      clearTimeout(clearTimerRef.current);
+      clearTimerRef.current = null;
+    }
+  }, []);
 
   const show = useCallback((msg) => {
-    if (timerRef.current) clearTimeout(timerRef.current);
+    tokenRef.current += 1;
+    const currentToken = tokenRef.current;
+
+    clearTimers();
     setMessage(msg);
     setPhase("in");
 
-    timerRef.current = setTimeout(() => {
+    hideTimerRef.current = setTimeout(() => {
+      if (tokenRef.current !== currentToken) return;
       setPhase("out");
-      setTimeout(() => setMessage(null), 350);
+      clearTimerRef.current = setTimeout(() => {
+        if (tokenRef.current !== currentToken) return;
+        setMessage(null);
+        clearTimerRef.current = null;
+      }, 350);
+      hideTimerRef.current = null;
     }, duration);
-  }, [duration]);
+  }, [clearTimers, duration]);
+
+  const clear = useCallback(() => {
+    tokenRef.current += 1;
+    clearTimers();
+    setMessage(null);
+    setPhase("in");
+  }, [clearTimers]);
 
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      clearTimers();
     };
-  }, []);
+  }, [clearTimers]);
 
-  return { message, phase, show };
+  return { message, phase, show, clear };
 }
 
 export function useIntro() {

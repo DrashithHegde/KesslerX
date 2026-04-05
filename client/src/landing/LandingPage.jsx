@@ -149,7 +149,7 @@ export default function LandingPage({ videoSrc = "/videos/earthsatellite.mp4" })
             return undefined;
         }
 
-        const observer = new IntersectionObserver(
+        const observer = new window.IntersectionObserver(
             (entries) => {
                 entries.forEach((entry) => {
                     if (entry.isIntersecting) {
@@ -336,18 +336,20 @@ export default function LandingPage({ videoSrc = "/videos/earthsatellite.mp4" })
                     </section>
 
                     <section className="kx-cta" id="cta">
-                        <div className="kx-cta-box" data-reveal>
-                            <div className="kx-cta-tag">SATELLITE SURVEILLANCE</div>
-                            <h2 className="kx-cta-title">
-                                Activate <span className="amber">satellite</span> <span>surveillance.</span>
-                            </h2>
-                            <p className="kx-cta-copy">
-                                Launch a live orbital watch layer that tracks conjunctions, debris fields, and
-                                emerging risk windows in real time.
-                            </p>
-                            <a className="kx-btn kx-btn-primary kx-btn-cta" href="/app/">
-                                LAUNCH SURVEILLANCE
-                            </a>
+                        <div className="kx-container">
+                            <div className="kx-cta-box" data-reveal>
+                                <div className="kx-cta-tag">SATELLITE SURVEILLANCE</div>
+                                <h2 className="kx-cta-title">
+                                    Activate <span className="amber">satellite</span> <span>surveillance.</span>
+                                </h2>
+                                <p className="kx-cta-copy">
+                                    Launch a live orbital watch layer that tracks conjunctions, debris fields, and
+                                    emerging risk windows in real time.
+                                </p>
+                                <a className="kx-btn kx-btn-primary kx-btn-cta" href="/app/">
+                                    LAUNCH SURVEILLANCE
+                                </a>
+                            </div>
                         </div>
                     </section>
                 </div>

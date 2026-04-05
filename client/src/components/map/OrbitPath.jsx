@@ -13,6 +13,7 @@ export default function OrbitPath({
   opacity = 0.8,
   pastColor = "#46f3ff",
   futureColor = "#46f3ff",
+  referenceTime = new Date(),
 }) {
   const dashedLineRef = useRef();
   const dashedGlowLineRef = useRef();
@@ -20,7 +21,7 @@ export default function OrbitPath({
   const { pastPoints, futurePoints } = useMemo(() => {
     if (!satrec) return { pastPoints: [], futurePoints: [] };
 
-    const now = new Date();
+    const now = referenceTime instanceof Date ? referenceTime : new Date(referenceTime);
     const pastPts = [];
     const futurePts = [];
 
@@ -79,7 +80,7 @@ export default function OrbitPath({
     }
 
     return { pastPoints: pastPts, futurePoints: futurePts };
-  }, [satrec]);
+  }, [referenceTime, satrec]);
 
   const pastGeometry = useMemo(() => {
     if (pastPoints.length < 2) return null;
