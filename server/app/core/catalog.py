@@ -9,10 +9,12 @@ from sklearn.ensemble import IsolationForest
 
 from sgp4.api import Satrec, jday
 
+from app.core.config import get_settings
 from app.core.redis import get_redis
 from app.ml.debris_model import debris_model
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 EARTH_RADIUS_KM = 6371.0
 MU_EARTH_KM3_S2 = 398600.4418
@@ -78,15 +80,19 @@ def orbital_regime(altitude_km: float | None) -> str:
 
 
 def load_cached_catalog() -> list[dict[str, Any]]:
-    redis_client = get_redis()
+    redis_client = get_redis() if settings.use_redis_cache else None
     if redis_client:
-        payload = redis_client.get(REDIS_CACHE_KEY)
-        if payload:
-            try:
-                data = json.loads(payload)
-                return data if isinstance(data, list) else []
-            except json.JSONDecodeError:
-                pass
+        try:
+            payload = redis_client.get(REDIS_CACHE_KEY)
+            if payload:
+                try:
+                    data = json.loads(payload)
+                    return data if isinstance(data, list) else []
+                except json.JSONDecodeError:
+                    pass
+        except Exception:
+            # Redis is optional; continue with local cache fallback.
+            pass
 
     try:
         data = json.loads(LOCAL_CACHE_PATH.read_text(encoding="utf-8"))

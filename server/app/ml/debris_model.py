@@ -8,9 +8,11 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
+from app.core.config import get_settings
 from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 LOCAL_CACHE_PATH = Path(__file__).resolve().parents[2] / "tle_cache.json"
 
 
@@ -56,11 +58,15 @@ class DebrisUncertaintyModel:
         self._is_fitted = False
 
     def _load_catalog(self):
-        redis_client = get_redis()
+        redis_client = get_redis() if settings.use_redis_cache else None
         if redis_client:
-          dataset_json = redis_client.get("kesslerx:satellites")
-          if dataset_json:
-              return json.loads(dataset_json)
+          try:
+              dataset_json = redis_client.get("kesslerx:satellites")
+              if dataset_json:
+                  return json.loads(dataset_json)
+          except Exception:
+              # Redis is optional for local/dev runs; fallback to local cache.
+              pass
 
         try:
             return json.loads(LOCAL_CACHE_PATH.read_text(encoding="utf-8"))

@@ -14,12 +14,14 @@ from app.api.routes import (
     LOCAL_CACHE_PATH,
 )
 from app.core.catalog import _screen_pair, build_catalog_records, utc_now, utc_iso
+from app.core.config import get_settings
 from app.core.redis import get_redis
 from app.ml.debris_model import debris_model
 from sgp4.api import Satrec, jday
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 class ScenarioInjectRequest(BaseModel):
     tle_line1: str | None = None
@@ -34,7 +36,7 @@ class ScenarioCollisionRequest(BaseModel):
 
 
 def load_active_satellites() -> list[dict]:
-    redis_client = get_redis()
+    redis_client = get_redis() if settings.use_redis_cache else None
     if redis_client:
         dataset_json = redis_client.get("kesslerx:satellites")
         if dataset_json:
@@ -47,7 +49,7 @@ def load_active_satellites() -> list[dict]:
 
 
 def save_active_satellites(satellites: list[dict], source: str = "scenario") -> None:
-    redis_client = get_redis()
+    redis_client = get_redis() if settings.use_redis_cache else None
     if redis_client:
         redis_client.set("kesslerx:satellites", json.dumps(satellites))
         redis_client.set("kesslerx:satellites:timestamp", str(int(time.time())))
@@ -392,7 +394,7 @@ async def reset_scenario():
     to SpaceTrack on the next frontend load.
     """
     try:
-        redis_client = get_redis()
+        redis_client = get_redis() if settings.use_redis_cache else None
         if redis_client:
             redis_client.delete("kesslerx:satellites")
             redis_client.delete("kesslerx:satellites:timestamp")

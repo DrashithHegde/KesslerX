@@ -13,7 +13,7 @@ from app.core.redis import get_redis
 router = APIRouter()
 settings = get_settings()
 logger = logging.getLogger(__name__)
-redis_client = get_redis()
+redis_client = get_redis() if settings.use_redis_cache else None
 
 SPACETRACK_LOGIN_URL = "https://www.space-track.org/ajaxauth/login"
 SPACETRACK_QUERY_URL = (
@@ -162,10 +162,18 @@ async def fetch_spacetrack_catalog(client: httpx.AsyncClient) -> list[dict]:
 
 @router.get("/health")
 def health() -> dict[str, str]:
+    redis_connected = "no"
+    if redis_client:
+        try:
+            redis_connected = "yes" if redis_client.ping() else "no"
+        except Exception:
+            redis_connected = "no"
+
     return {
         "status": "ok", 
         "service": "kesslerx-api",
-        "redis_connected": "yes" if redis_client and redis_client.ping() else "no",
+        "cache_backend": "redis" if settings.use_redis_cache else "local",
+        "redis_connected": redis_connected,
         "tle_source": settings.tle_source,
     }
 
@@ -177,7 +185,7 @@ async def get_satellites() -> dict:
         file_age = get_cache_age()
 
         if file_age < CACHE_EXPIRY_SECONDS:
-            logger.info("Serving fresh satellite cache from Redis (%s seconds old)", file_age)
+            logger.info("Serving fresh satellite cache (%s seconds old)", file_age)
             return build_satellite_response(
                 data,
                 cached=True,
@@ -187,7 +195,7 @@ async def get_satellites() -> dict:
             )
 
         if not is_safe_fetch_window():
-            logger.info("Serving stale satellite cache from Redis while waiting for safe fetch window")
+            logger.info("Serving stale satellite cache while waiting for safe fetch window")
             return build_satellite_response(
                 data,
                 cached=True,
@@ -206,7 +214,7 @@ async def get_satellites() -> dict:
         satellites = await fetch_spacetrack_catalog(client)
 
     save_cache(satellites, source)
-    logger.info("Fetched %s satellite records from %s and saved to Redis", len(satellites), source)
+    logger.info("Fetched %s satellite records from %s and updated cache", len(satellites), source)
     return build_satellite_response(
         satellites,
         cached=False,

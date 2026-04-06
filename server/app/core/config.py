@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     spacetrack_user: str = ""
     spacetrack_pass: str = ""
     redis_url: str = "redis://localhost:6379/0"
+    cache_backend: str = "local"
     gemini_api_key: str = ""
 
     model_config = SettingsConfigDict(
@@ -25,6 +26,10 @@ class Settings(BaseSettings):
     @property
     def parsed_cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def use_redis_cache(self) -> bool:
+        return self.cache_backend.strip().lower() == "redis"
 
 
 
