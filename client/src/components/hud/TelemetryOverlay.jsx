@@ -1,9 +1,25 @@
-export default function TelemetryOverlay({ analysis, datasetStats, activePair, activeScenario }) {
+export default function TelemetryOverlay({
+  analysis,
+  datasetStats,
+  activePair,
+  activePairTimelineEvent,
+  activeScenario,
+}) {
   const altitude = analysis?.currentState?.altitudeKm;
   const speed = analysis?.currentState?.speedKps;
   const regime = analysis?.regime;
-  const tca = activePair?.sampled_tca_minutes ?? analysis?.closestApproach?.sampledTcaMinutes;
+  const tca = activePairTimelineEvent?.timeline_minute
+    ?? activePair?.timeline_minute
+    ?? activePair?.sampled_tca_minutes
+    ?? analysis?.closestApproach?.sampledTcaMinutes;
   const pairLabel = activePair ? `${activePair.target_name} VS ${activePair.candidate_name}` : null;
+  const eventTone = activePair?.is_confirmed_collision
+    ? "#ff5f57"
+    : activePair?.event_class === "super_close_call"
+      ? "#ff8c42"
+      : activePair?.event_class === "close_approach"
+        ? "#ffd166"
+        : "#d97f2a";
   const scenarioLabel = activeScenario
     ? activeScenario.kind === "collision"
       ? `${activeScenario.collisionStarted ? "SCENARIO COLLISION LIVE" : "SCENARIO COLLISION READY"
@@ -53,6 +69,16 @@ export default function TelemetryOverlay({ analysis, datasetStats, activePair, a
           ? `REGIME ${regime}  |  SAMPLED TCA ${tca} MIN`
           : "CONJUNCTION SCREENING ACTIVE"}
       </div>
+      {activePair ? (
+        <div
+          style={{
+            fontSize: "0.55rem",
+            color: eventTone,
+          }}
+        >
+          {activePair.event_label || activePair.risk_band}  |  {pairLabel}
+        </div>
+      ) : null}
     </div>
   );
 }

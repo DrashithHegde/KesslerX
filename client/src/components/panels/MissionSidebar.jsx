@@ -7,6 +7,39 @@ function alertColor(riskBand) {
   return "#00d1ff";
 }
 
+function alertAccent(alert) {
+  if (alert?.is_confirmed_collision || alert?.event_class === "collision") {
+    return {
+      border: "1px solid rgba(255,95,110,0.3)",
+      background: "rgba(38,10,14,0.56)",
+      chip: "#ff5f57",
+      detail: "rgba(255,180,180,0.58)",
+    };
+  }
+  if (alert?.event_class === "super_close_call") {
+    return {
+      border: "1px solid rgba(255,140,66,0.22)",
+      background: "rgba(33,18,8,0.5)",
+      chip: "#ff8c42",
+      detail: "rgba(255,196,150,0.52)",
+    };
+  }
+  if (alert?.event_class === "close_approach") {
+    return {
+      border: "1px solid rgba(255,209,102,0.18)",
+      background: "rgba(32,26,10,0.48)",
+      chip: "#ffd166",
+      detail: "rgba(235,223,178,0.5)",
+    };
+  }
+  return {
+    border: "1px solid rgba(0,229,255,0.08)",
+    background: "rgba(11,15,20,0.42)",
+    chip: alertColor(alert?.risk_band),
+    detail: "rgba(200,214,229,0.46)",
+  };
+}
+
 function LayerChip({ config, active, onClick }) {
   return (
     <button
@@ -187,14 +220,16 @@ function FiltersView({
   );
 }
 
-function AlertsView({ alerts, activeAlertKey, onSelectAlert }) {
+function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) {
   return (
     <div style={{ display: "grid", gap: 8 }}>
       {alerts.length > 0 ? (
         alerts.map((alert) => (
           (() => {
             const alertKey = `${alert.target_norad_id}-${alert.candidate_norad_id}`;
-            const isActive = activeAlertKey === alertKey;
+            const isPairActive = activeAlertKey === alertKey;
+            const isPreviewActive = previewAlertKey === alertKey && !isPairActive;
+            const accent = alertAccent(alert);
             return (
               <button
                 key={alertKey}
@@ -206,12 +241,16 @@ function AlertsView({ alerts, activeAlertKey, onSelectAlert }) {
                   textAlign: "left",
                   padding: "10px 11px",
                   borderRadius: 8,
-                  border: isActive
+                  border: isPairActive || isPreviewActive
                     ? "1px solid rgba(0,229,255,0.28)"
-                    : "1px solid rgba(0,229,255,0.08)",
-                  background: isActive ? "rgba(0,229,255,0.08)" : "rgba(11,15,20,0.42)",
+                    : accent.border,
+                  background: isPairActive || isPreviewActive
+                    ? "rgba(0,229,255,0.08)"
+                    : accent.background,
                   color: "rgba(255,255,255,0.84)",
-                  boxShadow: isActive ? "0 0 0 1px rgba(0,229,255,0.1) inset" : "none",
+                  boxShadow: isPairActive || isPreviewActive
+                    ? "0 0 0 1px rgba(0,229,255,0.1) inset"
+                    : "none",
                   cursor: "pointer",
                 }}
               >
@@ -220,11 +259,11 @@ function AlertsView({ alerts, activeAlertKey, onSelectAlert }) {
                     style={{
                       fontSize: "0.48rem",
                       letterSpacing: "0.14em",
-                      color: alertColor(alert.risk_band),
+                      color: accent.chip,
                       textTransform: "uppercase",
                     }}
                   >
-                    {alert.risk_band}
+                    {alert.event_label || alert.risk_band}
                   </span>
                   <span style={{ fontSize: "0.48rem", color: "rgba(200,214,229,0.46)" }}>
                     {alert.risk_score}%
@@ -233,7 +272,7 @@ function AlertsView({ alerts, activeAlertKey, onSelectAlert }) {
                 <div style={{ marginTop: 6, fontSize: "0.58rem", lineHeight: 1.45 }}>
                   {alert.target_name}
                 </div>
-                <div style={{ marginTop: 3, fontSize: "0.48rem", color: "rgba(200,214,229,0.46)" }}>
+                <div style={{ marginTop: 3, fontSize: "0.48rem", color: accent.detail }}>
                   vs {alert.candidate_name}
                 </div>
                 <div
@@ -250,7 +289,7 @@ function AlertsView({ alerts, activeAlertKey, onSelectAlert }) {
                   <span>{alert.min_separation_km} km</span>
                   <span>T+{alert.sampled_tca_minutes}m</span>
                 </div>
-                {isActive ? (
+                {isPairActive ? (
                   <div
                     style={{
                       marginTop: 7,
@@ -260,7 +299,20 @@ function AlertsView({ alerts, activeAlertKey, onSelectAlert }) {
                       color: "rgba(0,229,255,0.62)",
                     }}
                   >
-                    Active pair on globe
+                    Scenario active
+                  </div>
+                ) : null}
+                {isPreviewActive ? (
+                  <div
+                    style={{
+                      marginTop: 7,
+                      fontSize: "0.44rem",
+                      letterSpacing: "0.12em",
+                      textTransform: "uppercase",
+                      color: "rgba(0,229,255,0.62)",
+                    }}
+                  >
+                    Satellite active | click again for scenario
                   </div>
                 ) : null}
               </button>
@@ -285,6 +337,7 @@ export default function MissionSidebar({
   onToggleLayer,
   alerts,
   activeAlertKey,
+  previewAlertKey,
   onSelectAlert,
 }) {
   const [activeTab, setActiveTab] = useState("filters");
@@ -376,7 +429,12 @@ export default function MissionSidebar({
             />
           ) : null}
           {activeTab === "alerts" ? (
-            <AlertsView alerts={alerts} activeAlertKey={activeAlertKey} onSelectAlert={onSelectAlert} />
+            <AlertsView
+              alerts={alerts}
+              activeAlertKey={activeAlertKey}
+              previewAlertKey={previewAlertKey}
+              onSelectAlert={onSelectAlert}
+            />
           ) : null}
         </div>
       </div>

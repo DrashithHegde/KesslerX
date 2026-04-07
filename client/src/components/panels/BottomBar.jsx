@@ -1,23 +1,49 @@
 import { useEffect, useRef, useState } from "react";
-
-const TIMELINE_DURATION_MS = 20000;
-const SIM_WINDOW_HOURS = 6;
-const TIMELINE_MARKERS = [
-  { position: 0.14, color: "#00e5ff" },
-  { position: 0.08, color: "#6fdcff" },
-  { position: 0.19, color: "#4aa8ff" },
-  { position: 0.27, color: "#8ee7ff" },
-  { position: 0.36, color: "#58b8ff" },
-  { position: 0.44, color: "#7ccfff" },
-  { position: 0.58, color: "#7ad6ff" },
-  { position: 0.66, color: "#99ecff" },
+import {
+  SIM_WINDOW_HOURS,
+  TIMELINE_DURATION_MS,
+} from "../../utils/simulationClock";
+const SPEED_OPTIONS = [
+  { label: "1x", speed: 0.5 },
+  { label: "2x", speed: 1 },
+  { label: "3x", speed: 2 },
 ];
+
+function eventMarkerColor(event) {
+  if (event?.is_confirmed_collision || event?.event_class === "collision") return "#ff5f57";
+  if (event?.event_class === "super_close_call") return "#ff8c42";
+  if (event?.event_class === "close_approach") return "#ffd166";
+  if (event?.risk_band === "SEVERE") return "#ff5f57";
+  if (event?.risk_band === "HIGH") return "#ff8c42";
+  if (event?.risk_band === "ELEVATED") return "#ffd166";
+  return "#00e5ff";
+}
 
 function formatSimTime(progress) {
   const totalMinutes = Math.round(progress * SIM_WINDOW_HOURS * 60);
   const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
   const minutes = String(totalMinutes % 60).padStart(2, "0");
   return `${hours}:${minutes}`;
+}
+
+function eventTimelineMinute(event) {
+  const minute = Number(
+    event?.timeline_minute
+      ?? event?.event_time_minutes
+      ?? event?.sampled_tca_minutes
+  );
+  return Number.isFinite(minute) ? minute : null;
+}
+
+function eventMarkerTitle(event) {
+  const summary = event?.event_label || event?.risk_band || "Tracked approach";
+  const counterpart = event?.candidate_name || event?.target_name || "Tracked object";
+  const timelineMinute = eventTimelineMinute(event);
+  const timePosition = timelineMinute !== null
+    ? timelineMinute / (SIM_WINDOW_HOURS * 60)
+    : Number.NaN;
+  const timestamp = Number.isFinite(timePosition) ? `T+${formatSimTime(timePosition)}` : null;
+  return [summary, counterpart, timestamp].filter(Boolean).join(" // ");
 }
 
 function CompactChip({
@@ -83,7 +109,7 @@ function CompactChip({
   );
 }
 
-function SweepTimeline({ progress, onSeek }) {
+function SweepTimeline({ progress, onSeek, markers = [] }) {
   const trackRef = useRef(null);
 
   const handleClick = (event) => {
@@ -121,22 +147,41 @@ function SweepTimeline({ progress, onSeek }) {
           }}
         />
 
-        {TIMELINE_MARKERS.map((marker) => (
-          <span
-            key={`${marker.position}-${marker.color}`}
-            style={{
-              position: "absolute",
-              left: `${marker.position * 100}%`,
-              top: "50%",
-              transform: "translate(-50%, -50%)",
-              width: 7,
-              height: 7,
-              borderRadius: "50%",
-              background: marker.color,
-              boxShadow: `0 0 8px ${marker.color}`,
-              border: "1px solid rgba(4,7,11,0.9)",
-            }}
-          />
+        {markers.map((marker, index) => (
+          <span key={`${marker.position}-${marker.color}-${index}`}>
+            {marker.label ? (
+              <span
+                style={{
+                  position: "absolute",
+                  left: `${marker.position * 100}%`,
+                  bottom: `calc(100% + ${index % 2 === 0 ? 10 : 24}px)`,
+                  transform: "translateX(-50%)",
+                  fontSize: "0.42rem",
+                  letterSpacing: "0.12em",
+                  color: marker.color,
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {marker.label}
+              </span>
+            ) : null}
+            <span
+              style={{
+                position: "absolute",
+                left: `${marker.position * 100}%`,
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+                width: marker.label ? 8 : 7,
+                height: marker.label ? 8 : 7,
+                borderRadius: "50%",
+                background: marker.color,
+                boxShadow: `0 0 8px ${marker.color}`,
+                border: "1px solid rgba(4,7,11,0.9)",
+              }}
+              title={marker.title || undefined}
+            />
+          </span>
         ))}
 
         <div
@@ -165,7 +210,6 @@ export default function BottomBar({
   onSimPause,
   onSimComplete,
   onSimSpeedChange,
-  onSimAddSatellite,
   onSimTriggerCollision,
   onStartCollisionSimulation,
   onSimReset,
@@ -174,11 +218,27 @@ export default function BottomBar({
   simActionPending = false,
   simProgressRef,
   onSimProgressChange,
+  focusMode = false,
+  onToggleFocusMode,
   activeScenario = null,
+  timelineEvents = [],
+  riskInjected = false,
 }) {
   const [timelineProgress, setTimelineProgress] = useState(0);
   const rafRef = useRef(null);
   const hasCompletedRef = useRef(false);
+  const timelineProgressRef = useRef(0);
+  const anchorProgressRef = useRef(0);
+  const anchorWallTimeRef = useRef(0);
+
+  const syncProgress = (nextProgress, options = {}) => {
+    timelineProgressRef.current = nextProgress;
+    setTimelineProgress(nextProgress);
+    if (simProgressRef) {
+      simProgressRef.current = nextProgress;
+    }
+    onSimProgressChange?.(nextProgress, options);
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -189,6 +249,10 @@ export default function BottomBar({
       }
     };
   }, []);
+
+  useEffect(() => {
+    timelineProgressRef.current = timelineProgress;
+  }, [timelineProgress]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !simRunning) {
@@ -202,25 +266,18 @@ export default function BottomBar({
       return undefined;
     }
 
-    let last = performance.now();
-    const duration = TIMELINE_DURATION_MS / simSpeed;
+    anchorProgressRef.current = timelineProgressRef.current;
+    anchorWallTimeRef.current = performance.now();
 
     const tick = (now) => {
-      const delta = now - last;
-      last = now;
+      const elapsedWallMs = now - anchorWallTimeRef.current;
+      const next = Math.min(
+        anchorProgressRef.current + (elapsedWallMs * simSpeed) / TIMELINE_DURATION_MS,
+        1
+      );
+      const shouldContinue = next < 1;
 
-      let shouldContinue = true;
-      setTimelineProgress((prev) => {
-        const next = Math.min(prev + delta / duration, 1);
-        if (simProgressRef) simProgressRef.current = next;
-        onSimProgressChange?.(next);
-
-        if (next >= 1) {
-          shouldContinue = false;
-        }
-
-        return next;
-      });
+      syncProgress(next, { wallTimeMs: now });
 
       if (shouldContinue) {
         rafRef.current = requestAnimationFrame(tick);
@@ -245,7 +302,7 @@ export default function BottomBar({
         rafRef.current = null;
       }
     };
-  }, [onSimComplete, onSimProgressChange, simRunning, simSpeed, simProgressRef, timelineProgress]);
+  }, [onSimComplete, onSimProgressChange, simRunning, simSpeed, simProgressRef]);
 
   const handlePlayPause = () => {
     if (simRunning) {
@@ -259,22 +316,38 @@ export default function BottomBar({
     if (ratio < 1) {
       hasCompletedRef.current = false;
     }
-    setTimelineProgress(ratio);
-    if (simProgressRef) simProgressRef.current = ratio;
-    onSimProgressChange?.(ratio);
+    anchorProgressRef.current = ratio;
+    syncProgress(ratio, { forceSync: true });
   };
 
   const handleReset = () => {
     hasCompletedRef.current = false;
-    setTimelineProgress(0);
-    if (simProgressRef) simProgressRef.current = 0;
-    onSimProgressChange?.(0);
+    anchorProgressRef.current = 0;
+    syncProgress(0, { forceSync: true });
     onSimReset();
   };
   const collisionReady =
     activeScenario?.kind === "collision" && !activeScenario?.collisionStarted;
   const collisionActive =
     activeScenario?.kind === "collision" && activeScenario?.collisionStarted;
+  const scenarioTimelineMarkers = Array.isArray(timelineEvents)
+    ? timelineEvents
+      .map((event, index) => {
+        const timelineMinute = eventTimelineMinute(event);
+        if (timelineMinute === null) {
+          return null;
+        }
+
+        return {
+          position: Math.min(Math.max(timelineMinute / (SIM_WINDOW_HOURS * 60), 0), 1),
+          color: eventMarkerColor(event),
+          label: formatSimTime(timelineMinute / (SIM_WINDOW_HOURS * 60)),
+          title: eventMarkerTitle(event) || `Event ${index + 1}`,
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.position - right.position)
+    : [];
 
   return (
     <div
@@ -345,7 +418,11 @@ export default function BottomBar({
             {simRunning ? "Playback live" : "Scenario standby"}
           </div>
 
-          <SweepTimeline progress={timelineProgress} onSeek={handleSeek} />
+          <SweepTimeline
+            progress={timelineProgress}
+            onSeek={handleSeek}
+            markers={scenarioTimelineMarkers}
+          />
 
           <div
             style={{
@@ -391,12 +468,12 @@ export default function BottomBar({
             >
               Speed
             </span>
-            {[1, 2, 5].map((value) => (
+            {SPEED_OPTIONS.map((option) => (
               <CompactChip
-                key={value}
-                label={`${value}x`}
-                onClick={() => onSimSpeedChange(value)}
-                active={simSpeed === value}
+                key={option.label}
+                label={option.label}
+                onClick={() => onSimSpeedChange(option.speed, option.label)}
+                active={simSpeed === option.speed}
                 minWidth={46}
               />
             ))}
@@ -412,7 +489,7 @@ export default function BottomBar({
             }}
           >
             <CompactChip
-              label={simActionPending ? "Working" : "Inject Risk"}
+              label={simActionPending ? "Working" : riskInjected ? "Deinject Risk" : "Inject Risk"}
               onClick={onSimTriggerCollision}
               tone="warning"
               disabled={simActionPending}
@@ -425,9 +502,9 @@ export default function BottomBar({
               disabled={simActionPending || !collisionReady}
             />
             <CompactChip
-              label={simActionPending ? "Working" : "Add Satellite"}
-              onClick={onSimAddSatellite}
-              disabled={simActionPending}
+              label="Focus Mode"
+              onClick={onToggleFocusMode}
+              active={focusMode}
             />
             <CompactChip
               label="Open Analysis"

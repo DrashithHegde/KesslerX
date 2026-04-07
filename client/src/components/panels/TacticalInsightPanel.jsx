@@ -25,7 +25,7 @@ function buildOneLineInsight({ riskBand, minSeparationKm, densityBand }) {
         ? "multiple close approaches"
         : "moderate separation windows";
 
-  return `WARNING: ${riskTone} collision risk due to ${proximity} in a ${(densityBand || "mixed-density").toLowerCase()} debris environment.`;
+  return `WARNING: ${riskTone} conjunction risk due to ${proximity} in a ${(densityBand || "mixed-density").toLowerCase()} debris environment.`;
 }
 
 function SectionLabel({ children, status, statusColor = "rgba(0,229,255,0.6)" }) {
@@ -219,6 +219,7 @@ export default function TacticalInsightPanel({
   target,
   analysis,
   activePair,
+  activePairTimelineEvent,
   comparedNoradId,
   simRunning = false,
   onCompareObject,
@@ -228,13 +229,17 @@ export default function TacticalInsightPanel({
   onClearWarning,
 }) {
   const effectiveRiskScore = activePair?.risk_score ?? analysis?.riskScore;
+  const collisionConfirmed = Boolean(activePair?.is_confirmed_collision);
   const effectiveRiskBand = activePair?.risk_band ?? analysis?.riskBand;
   const effectiveRiskColor = activePair?.risk_color ?? (
     activePair?.risk_band
       ? riskBandColor(activePair.risk_band)
       : analysis?.riskColor
   );
-  const effectiveTca = activePair?.sampled_tca_minutes ?? analysis?.closestApproach?.sampledTcaMinutes;
+  const effectiveTca = activePairTimelineEvent?.timeline_minute
+    ?? activePair?.timeline_minute
+    ?? activePair?.sampled_tca_minutes
+    ?? analysis?.closestApproach?.sampledTcaMinutes;
   const effectiveClosestPass = activePair?.min_separation_km ?? analysis?.closestApproach?.minSeparationKm;
   const riskScoreValue = Number(effectiveRiskScore || 0);
   const closestPassValue = Number(effectiveClosestPass);
@@ -268,7 +273,7 @@ export default function TacticalInsightPanel({
         noradId: activePair.candidate_norad_id,
         currentSeparationKm: activePair.current_separation_km,
         minSeparationKm: activePair.min_separation_km,
-        sampledTcaMinutes: activePair.sampled_tca_minutes,
+        sampledTcaMinutes: activePairTimelineEvent?.timeline_minute ?? activePair.sampled_tca_minutes,
         pairRiskScore: activePair.risk_score,
         pairRiskBand: activePair.risk_band,
         pairRiskColor: activePair.risk_color ?? riskBandColor(activePair.risk_band),
@@ -452,10 +457,10 @@ export default function TacticalInsightPanel({
                 </div>
               </div>
 
-              <div style={{ marginTop: 12 }}>
-                <SectionLabel status={`${effectiveRiskScore}%`} statusColor={effectiveRiskColor}>
-                  Collision Risk
-                </SectionLabel>
+                <div style={{ marginTop: 12 }}>
+                  <SectionLabel status={`${effectiveRiskScore}%`} statusColor={effectiveRiskColor}>
+                    {collisionConfirmed ? "Collision Risk" : "Conjunction Risk"}
+                  </SectionLabel>
                 <div
                   style={{
                     display: "grid",
@@ -469,7 +474,7 @@ export default function TacticalInsightPanel({
                     accent={effectiveRiskColor}
                   />
                   <StatGridCard
-                    label="Sampled TCA"
+                    label="Event Time"
                     value={effectiveTca !== undefined && effectiveTca !== null ? `T+${effectiveTca} min` : "Clear"}
                     accent="rgba(255,209,102,0.9)"
                   />
@@ -680,7 +685,10 @@ export default function TacticalInsightPanel({
                     <DetailRow label="Target" value={activePair.target_name} />
                     <DetailRow label="Counterpart" value={activePair.candidate_name} accent={getObjectTypeColor(activePair.candidate_type)} />
                     <DetailRow label="Pair Risk" value={`${activePair.risk_score}%`} accent={effectiveRiskColor} />
-                    <DetailRow label="Pair TCA" value={`T+${activePair.sampled_tca_minutes} min`} />
+                    <DetailRow
+                      label="Pair TCA"
+                      value={`T+${activePairTimelineEvent?.timeline_minute ?? activePair.sampled_tca_minutes} min`}
+                    />
                   </div>
                 </div>
               ) : null}

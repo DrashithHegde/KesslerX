@@ -7,9 +7,11 @@ import OrbitPath from "./OrbitPath";
 import {
   buildDatasetStats,
   buildTargetAnalysis,
+  buildTargetTimelineEvents,
   getObjectTypeColor,
   getPropagationSnapshot,
 } from "../../utils/orbitalAnalysis";
+import { SIM_WINDOW_MS } from "../../utils/simulationClock";
 import {
   CRTEarthVertexShader,
   CRTEarthFragmentShader,
@@ -21,6 +23,7 @@ const EARTH_RADIUS = 1;
 const EARTH_POLAR_SCALE = 0.92;
 const EARTH_STAR_OCCLUDER_RADIUS = EARTH_RADIUS - 0.003;
 const MARKER_HUD_COLOR = "#d2882e";
+const SYNTHETIC_MARKER_COLOR = "#5f6872";
 const BASE_SATELLITE_RADIUS = 0.005;
 const SELECTED_MARKER_RADIUS = 0.022;
 const SELECTION_HALO_INNER_RADIUS = 0.05;
@@ -33,6 +36,10 @@ const SELECTED_MARKER_OCCLUSION_PADDING = SELECTED_MARKER_RADIUS;
 const IMPACT_PROXIMITY_THRESHOLD_KM = 900;
 const COLLISION_WAVE_THRESHOLD_KM = 1800;
 const ZONE_UNIT_VECTOR = new THREE.Vector3(0, 0, 1);
+const BACKGROUND_INTERPOLATION_STEP_MS = 90000;
+const PRIORITY_INTERPOLATION_STEP_MS = 30000;
+const BACKGROUND_MOTION_DAMPING = 11;
+const PRIORITY_MOTION_DAMPING = 16;
 
 function createPayloadMarkerSprite() {
   if (typeof document === "undefined") return null;
@@ -196,6 +203,180 @@ function lerpPosition(left, right, alpha) {
   ];
 }
 
+function setVectorFromArray(target, source) {
+  target.set(source[0], source[1], source[2]);
+  return target;
+}
+
+function cubicInterpolatePosition(startSnapshot, endSnapshot, alpha, durationSeconds, target) {
+  const startPosition = startSnapshot?.position;
+  const endPosition = endSnapshot?.position;
+  if (!startPosition || !endPosition) return null;
+
+  const startVelocity = startSnapshot?.velocity;
+  const endVelocity = endSnapshot?.velocity;
+  if (!startVelocity || !endVelocity || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    target.set(
+      startPosition[0] + (endPosition[0] - startPosition[0]) * alpha,
+      startPosition[1] + (endPosition[1] - startPosition[1]) * alpha,
+      startPosition[2] + (endPosition[2] - startPosition[2]) * alpha
+    );
+    return target;
+  }
+
+  const alphaSq = alpha * alpha;
+  const alphaCu = alphaSq * alpha;
+  const h00 = 2 * alphaCu - 3 * alphaSq + 1;
+  const h10 = alphaCu - 2 * alphaSq + alpha;
+  const h01 = -2 * alphaCu + 3 * alphaSq;
+  const h11 = alphaCu - alphaSq;
+
+  target.set(
+    h00 * startPosition[0] +
+      h10 * durationSeconds * startVelocity[0] +
+      h01 * endPosition[0] +
+      h11 * durationSeconds * endVelocity[0],
+    h00 * startPosition[1] +
+      h10 * durationSeconds * startVelocity[1] +
+      h01 * endPosition[1] +
+      h11 * durationSeconds * endVelocity[1],
+    h00 * startPosition[2] +
+      h10 * durationSeconds * startVelocity[2] +
+      h01 * endPosition[2] +
+      h11 * durationSeconds * endVelocity[2]
+  );
+
+  return target;
+}
+
+function getContinuousSimTimeMs({
+  referenceTime = null,
+  simTimeRef,
+  simBaseTimeMs = 0,
+  simProgressRef,
+  simOffsetHours = 0,
+}) {
+  if (referenceTime instanceof Date) {
+    return referenceTime.getTime();
+  }
+
+  if (Number.isFinite(simTimeRef?.current)) {
+    return simTimeRef.current;
+  }
+
+  if (Number.isFinite(simBaseTimeMs)) {
+    return simBaseTimeMs + (simProgressRef?.current || 0) * SIM_WINDOW_MS;
+  }
+
+  return Date.now() + simOffsetHours * 3600 * 1000;
+}
+
+function updateMotionBracket(motionState, satrec, leftTimeMs, rightTimeMs) {
+  if (
+    motionState.rightTimeMs === leftTimeMs &&
+    motionState.rightSnapshot &&
+    motionState.leftTimeMs !== leftTimeMs
+  ) {
+    motionState.leftTimeMs = leftTimeMs;
+    motionState.leftSnapshot = motionState.rightSnapshot;
+  } else if (motionState.leftTimeMs !== leftTimeMs) {
+    motionState.leftTimeMs = leftTimeMs;
+    motionState.leftSnapshot = getPropagationSnapshot(satrec, new Date(leftTimeMs));
+  }
+
+  if (motionState.rightTimeMs !== rightTimeMs) {
+    motionState.rightTimeMs = rightTimeMs;
+    motionState.rightSnapshot = getPropagationSnapshot(satrec, new Date(rightTimeMs));
+  }
+}
+
+function getSmoothedMotionState({
+  satrec,
+  motionState,
+  simTimeMs,
+  simBaseTimeMs,
+  deltaSeconds,
+  sampleStepMs,
+  damping,
+  targetVector,
+  exactVector,
+  useExactPosition = false,
+}) {
+  const exactSnapshot = getPropagationSnapshot(satrec, new Date(simTimeMs));
+  if (!exactSnapshot?.position) return null;
+
+  const anchorTimeMs = Number.isFinite(simBaseTimeMs) ? simBaseTimeMs : 0;
+  const relativeTimeMs = simTimeMs - anchorTimeMs;
+  const leftTimeMs = anchorTimeMs + Math.floor(relativeTimeMs / sampleStepMs) * sampleStepMs;
+  const rightTimeMs = leftTimeMs + sampleStepMs;
+
+  updateMotionBracket(motionState, satrec, leftTimeMs, rightTimeMs);
+  setVectorFromArray(exactVector, exactSnapshot.position);
+
+  if (useExactPosition) {
+    if (!motionState.renderPosition) {
+      motionState.renderPosition = new THREE.Vector3();
+    }
+    motionState.renderPosition.copy(exactVector);
+    motionState.lastSimTimeMs = simTimeMs;
+    motionState.previousSnapshot = motionState.leftSnapshot;
+    motionState.nextSnapshot = motionState.rightSnapshot;
+    motionState.exactSnapshot = exactSnapshot;
+    return {
+      snapshot: exactSnapshot,
+      position: motionState.renderPosition,
+    };
+  }
+
+  const leftSnapshot = motionState.leftSnapshot;
+  const rightSnapshot = motionState.rightSnapshot;
+  if (
+    leftSnapshot?.position &&
+    rightSnapshot?.position &&
+    Number.isFinite(sampleStepMs) &&
+    sampleStepMs > 0
+  ) {
+    const alpha = THREE.MathUtils.clamp((simTimeMs - leftTimeMs) / sampleStepMs, 0, 1);
+    cubicInterpolatePosition(
+      leftSnapshot,
+      rightSnapshot,
+      alpha,
+      sampleStepMs / 1000,
+      targetVector
+    );
+    targetVector.lerp(exactVector, 0.18);
+  } else {
+    targetVector.copy(exactVector);
+  }
+
+  const jumped =
+    motionState.lastSimTimeMs !== undefined &&
+    Math.abs(simTimeMs - motionState.lastSimTimeMs) > sampleStepMs * 1.5;
+
+  if (!motionState.renderPosition) {
+    motionState.renderPosition = new THREE.Vector3();
+    motionState.renderPosition.copy(exactVector);
+  } else if (jumped) {
+    motionState.renderPosition.copy(exactVector);
+  } else {
+    motionState.renderPosition.set(
+      THREE.MathUtils.damp(motionState.renderPosition.x, targetVector.x, damping, deltaSeconds),
+      THREE.MathUtils.damp(motionState.renderPosition.y, targetVector.y, damping, deltaSeconds),
+      THREE.MathUtils.damp(motionState.renderPosition.z, targetVector.z, damping, deltaSeconds)
+    );
+  }
+
+  motionState.lastSimTimeMs = simTimeMs;
+  motionState.previousSnapshot = leftSnapshot;
+  motionState.nextSnapshot = rightSnapshot;
+  motionState.exactSnapshot = exactSnapshot;
+
+  return {
+    snapshot: exactSnapshot,
+    position: motionState.renderPosition,
+  };
+}
+
 function smoothstep(edge0, edge1, value) {
   const x = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return x * x * (3 - 2 * x);
@@ -258,14 +439,21 @@ function SatelliteSwarm({
   onSelectionPing,
   simProgressRef,
   simOffsetHours,
+  simTimeRef,
+  simBaseTimeMs,
+  priorityNoradIds,
 }) {
   const { camera } = useThree();
   const meshRef = useRef();
   const hitboxRef = useRef();
   const satPositionsRef = useRef([]);
+  const motionStatesRef = useRef(new Map());
   const pointerDownPos = useRef({ x: 0, y: 0 });
   const overlayUpdateRef = useRef(0);
+  const dummyRef = useMemo(() => new THREE.Object3D(), []);
   const tmpWorldPos = useMemo(() => new THREE.Vector3(), []);
+  const tmpTargetPos = useMemo(() => new THREE.Vector3(), []);
+  const tmpExactPos = useMemo(() => new THREE.Vector3(), []);
   const tmpCamPos = useMemo(() => new THREE.Vector3(), []);
   const tmpProjected = useMemo(() => new THREE.Vector3(), []);
 
@@ -280,26 +468,61 @@ function SatelliteSwarm({
 
   useEffect(() => {
     if (satData.length !== 0) return;
+    motionStatesRef.current.clear();
     onPayloadOverlayUpdate?.([]);
   }, [onPayloadOverlayUpdate, satData.length]);
 
-  useFrame((state) => {
+  useEffect(() => {
+    const liveNoradIds = new Set(
+      satData.map((sat, index) => String(sat.details?.NORAD_CAT_ID ?? index))
+    );
+    motionStatesRef.current.forEach((_, key) => {
+      if (!liveNoradIds.has(key)) {
+        motionStatesRef.current.delete(key);
+      }
+    });
+  }, [satData]);
+
+  useFrame((state, delta) => {
     if (!meshRef.current || !hitboxRef.current || satData.length === 0) return;
 
-    const simProgress = simProgressRef?.current || 0;
-    const offsetHours = simOffsetHours ?? simProgress * 6;
-    const now = new Date(Date.now() + offsetHours * 3600 * 1000);
-    const dummy = new THREE.Object3D();
+    const simTimeMs = getContinuousSimTimeMs({
+      simTimeRef,
+      simBaseTimeMs,
+      simProgressRef,
+      simOffsetHours,
+    });
     const overlayPayload = [];
     const viewport = state.size;
     const camPos = tmpCamPos.copy(state.camera.position);
     const tanHalfFov = Math.tan((state.camera.fov * Math.PI) / 360);
 
     satData.forEach((sat, index) => {
-      const snapshot = getPropagationSnapshot(sat.satrec, now);
-      if (!snapshot) return;
+      const noradKey = String(sat.details?.NORAD_CAT_ID ?? index);
+      let motionState = motionStatesRef.current.get(noradKey);
+      if (!motionState) {
+        motionState = {};
+        motionStatesRef.current.set(noradKey, motionState);
+      }
 
-      tmpWorldPos.set(...snapshot.position);
+      const isPriorityTrack = priorityNoradIds?.has(noradKey);
+      const motion = getSmoothedMotionState({
+        satrec: sat.satrec,
+        motionState,
+        simTimeMs,
+        simBaseTimeMs,
+        deltaSeconds: delta,
+        sampleStepMs: isPriorityTrack
+          ? PRIORITY_INTERPOLATION_STEP_MS
+          : BACKGROUND_INTERPOLATION_STEP_MS,
+        damping: isPriorityTrack ? PRIORITY_MOTION_DAMPING : BACKGROUND_MOTION_DAMPING,
+        targetVector: tmpTargetPos,
+        exactVector: tmpExactPos,
+        useExactPosition: Boolean(sat.details?.is_synthetic),
+      });
+      if (!motion) return;
+
+      tmpWorldPos.copy(motion.position);
 
       if (!satPositionsRef.current[index]) {
         satPositionsRef.current[index] = new THREE.Vector3();
@@ -309,10 +532,10 @@ function SatelliteSwarm({
       const occluded = isOccludedByEarth(camPos, tmpWorldPos);
       const visibleScale = occluded ? 0.000001 : 1;
 
-      dummy.position.copy(tmpWorldPos);
-      dummy.scale.setScalar(visibleScale);
-      dummy.updateMatrix();
-      meshRef.current.setMatrixAt(index, dummy.matrix);
+      dummyRef.position.copy(tmpWorldPos);
+      dummyRef.scale.setScalar(visibleScale);
+      dummyRef.updateMatrix();
+      meshRef.current.setMatrixAt(index, dummyRef.matrix);
 
       let hitScale = 1;
       if (!occluded && sat.type !== "PAYLOAD") {
@@ -329,9 +552,9 @@ function SatelliteSwarm({
         );
       }
 
-      dummy.scale.setScalar(occluded ? 0.000001 : hitScale);
-      dummy.updateMatrix();
-      hitboxRef.current.setMatrixAt(index, dummy.matrix);
+      dummyRef.scale.setScalar(occluded ? 0.000001 : hitScale);
+      dummyRef.updateMatrix();
+      hitboxRef.current.setMatrixAt(index, dummyRef.matrix);
 
       if (sat.type === "PAYLOAD" && !occluded) {
         tmpProjected.copy(tmpWorldPos).project(state.camera);
@@ -386,7 +609,7 @@ function SatelliteSwarm({
     const satPos = satPositionsRef.current[instanceId];
     if (isOccludedFromCamera(satPos)) return;
 
-    onSelectionPing?.({ x: event.clientX, y: event.clientY });
+    onSelectionPing?.({ x: event.clientX, y: event.clientY, force: true });
     onSelectSatellite(satData[instanceId]);
   };
 
@@ -450,6 +673,8 @@ function SelectedSatelliteMarker({
   sat,
   simProgressRef,
   simOffsetHours = 0,
+  simTimeRef,
+  simBaseTimeMs,
   referenceTime = null,
   color = "#f5c842",
   markerRadius = SELECTED_MARKER_RADIUS,
@@ -457,20 +682,46 @@ function SelectedSatelliteMarker({
   haloOuterRadius = SELECTION_HALO_OUTER_RADIUS,
   haloOpacity = 0.65,
   forceVisible = false,
+  useExactPosition = false,
 }) {
   const markerRef = useRef();
+  const motionStateRef = useRef({});
+  const tmpTargetPos = useMemo(() => new THREE.Vector3(), []);
+  const tmpExactPos = useMemo(() => new THREE.Vector3(), []);
   const { camera } = useThree();
+  const satNoradId = sat?.details?.NORAD_CAT_ID;
 
-  useFrame(() => {
-    const simProgress = simProgressRef?.current || 0;
-    const now =
-      referenceTime instanceof Date
-        ? referenceTime
-        : new Date(Date.now() + (simOffsetHours ?? simProgress * 6) * 3600 * 1000);
-    const nextSnapshot = getPropagationSnapshot(sat.satrec, now);
-    if (!nextSnapshot || !markerRef.current) return;
+  useEffect(() => {
+    motionStateRef.current = {};
+    if (markerRef.current) {
+      markerRef.current.position.set(0, 0, 0);
+      markerRef.current.visible = false;
+    }
+  }, [satNoradId]);
 
-    markerRef.current.position.set(...nextSnapshot.position);
+  useFrame((_, delta) => {
+    const simTimeMs = getContinuousSimTimeMs({
+      referenceTime,
+      simTimeRef,
+      simBaseTimeMs,
+      simProgressRef,
+      simOffsetHours,
+    });
+    const motion = getSmoothedMotionState({
+      satrec: sat.satrec,
+      motionState: motionStateRef.current,
+      simTimeMs,
+      simBaseTimeMs,
+      deltaSeconds: delta,
+      sampleStepMs: PRIORITY_INTERPOLATION_STEP_MS,
+      damping: PRIORITY_MOTION_DAMPING,
+      targetVector: tmpTargetPos,
+      exactVector: tmpExactPos,
+      useExactPosition,
+    });
+    if (!motion || !markerRef.current) return;
+
+    markerRef.current.position.copy(motion.position);
     markerRef.current.visible = forceVisible
       ? true
       : !isOccludedByEarth(
@@ -508,35 +759,64 @@ function PairLink({
   referenceTime,
   simOffsetHours = 0,
   simProgressRef,
+  simTimeRef,
+  simBaseTimeMs,
   color = "#77dcff",
 }) {
   const lineRef = useRef();
-  const leftRef = useRef(new THREE.Vector3());
-  const rightRef = useRef(new THREE.Vector3());
+  const leftMotionRef = useRef({});
+  const rightMotionRef = useRef({});
+  const leftRef = useMemo(() => new THREE.Vector3(), []);
+  const rightRef = useMemo(() => new THREE.Vector3(), []);
+  const targetVectorRef = useMemo(() => new THREE.Vector3(), []);
+  const exactVectorRef = useMemo(() => new THREE.Vector3(), []);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!lineRef.current || !leftSat?.satrec || !rightSat?.satrec) return;
 
-    const simProgress = simProgressRef?.current || 0;
-    const now =
-      referenceTime instanceof Date
-        ? referenceTime
-        : new Date(Date.now() + (simOffsetHours ?? simProgress * 6) * 3600 * 1000);
+    const simTimeMs = getContinuousSimTimeMs({
+      referenceTime,
+      simTimeRef,
+      simBaseTimeMs,
+      simProgressRef,
+      simOffsetHours,
+    });
+    const leftMotion = getSmoothedMotionState({
+      satrec: leftSat.satrec,
+      motionState: leftMotionRef.current,
+      simTimeMs,
+      simBaseTimeMs,
+      deltaSeconds: delta,
+      sampleStepMs: PRIORITY_INTERPOLATION_STEP_MS,
+      damping: PRIORITY_MOTION_DAMPING,
+      targetVector: targetVectorRef,
+      exactVector: exactVectorRef,
+      useExactPosition: Boolean(leftSat?.details?.is_synthetic),
+    });
+    const rightMotion = getSmoothedMotionState({
+      satrec: rightSat.satrec,
+      motionState: rightMotionRef.current,
+      simTimeMs,
+      simBaseTimeMs,
+      deltaSeconds: delta,
+      sampleStepMs: PRIORITY_INTERPOLATION_STEP_MS,
+      damping: PRIORITY_MOTION_DAMPING,
+      targetVector: targetVectorRef,
+      exactVector: exactVectorRef,
+      useExactPosition: Boolean(rightSat?.details?.is_synthetic),
+    });
+    if (!leftMotion || !rightMotion) return;
 
-    const leftSnapshot = getPropagationSnapshot(leftSat.satrec, now);
-    const rightSnapshot = getPropagationSnapshot(rightSat.satrec, now);
-    if (!leftSnapshot || !rightSnapshot) return;
-
-    leftRef.current.set(...leftSnapshot.position);
-    rightRef.current.set(...rightSnapshot.position);
+    leftRef.copy(leftMotion.position);
+    rightRef.copy(rightMotion.position);
 
     const positions = lineRef.current.geometry.attributes.position.array;
-    positions[0] = leftRef.current.x;
-    positions[1] = leftRef.current.y;
-    positions[2] = leftRef.current.z;
-    positions[3] = rightRef.current.x;
-    positions[4] = rightRef.current.y;
-    positions[5] = rightRef.current.z;
+    positions[0] = leftRef.x;
+    positions[1] = leftRef.y;
+    positions[2] = leftRef.z;
+    positions[3] = rightRef.x;
+    positions[4] = rightRef.y;
+    positions[5] = rightRef.z;
     lineRef.current.geometry.attributes.position.needsUpdate = true;
     lineRef.current.computeLineDistances?.();
   });
@@ -842,15 +1122,22 @@ export default function Globe({
   refreshSignal,
   simOffsetHours = 0,
   simProgressRef,
+  simTimeRef,
+  simBaseTimeMs = 0,
   comparedNoradId = null,
+  focusCounterpartNoradId = null,
+  focusMode = false,
+  focusObjectIds = [],
   activePair = null,
   scenarioState = null,
   uncertaintyZones = [],
   showOrbitalPaths = true,
 }) {
   const controlsRef = useRef();
+  const analysisRequestIdRef = useRef(0);
   const [selectedSat, setSelectedSat] = useState(null);
   const [allSatData, setAllSatData] = useState([]);
+  const [analysisSnapshot, setAnalysisSnapshot] = useState(null);
   const [datasetMeta, setDatasetMeta] = useState({
     status: "loading",
     cached: false,
@@ -861,29 +1148,67 @@ export default function Globe({
   });
   const [payloadOverlayMarkers, setPayloadOverlayMarkers] = useState([]);
   const markerSprite = useMemo(() => createPayloadMarkerSprite(), []);
+  const focusObjectIdSet = useMemo(
+    () => new Set((focusObjectIds || []).map((id) => String(id))),
+    [focusObjectIds]
+  );
 
-  const filteredSatData = useMemo(() => {
+  const typeFilteredSatData = useMemo(() => {
     if (!Array.isArray(satTypes) || satTypes.length === 0) return [];
     return allSatData.filter((sat) => satTypes.includes(sat.type));
   }, [allSatData, satTypes]);
+  const filteredSatData = useMemo(() => {
+    if (!focusMode || focusObjectIdSet.size === 0) {
+      return typeFilteredSatData;
+    }
+
+    return allSatData.filter((sat) =>
+      focusObjectIdSet.has(String(sat.details?.NORAD_CAT_ID))
+    );
+  }, [allSatData, focusMode, focusObjectIdSet, typeFilteredSatData]);
 
   const datasetStats = useMemo(
     () => buildDatasetStats(allSatData, datasetMeta),
     [allSatData, datasetMeta]
   );
   const simulatedDate = useMemo(
-    () => new Date(Date.now() + simOffsetHours * 3600 * 1000),
-    [simOffsetHours]
+    () => new Date(
+      (Number.isFinite(simBaseTimeMs) ? simBaseTimeMs : Date.now()) + simOffsetHours * 3600 * 1000
+    ),
+    [simBaseTimeMs, simOffsetHours]
   );
-
-  const analysisSnapshot = useMemo(() => {
-    if (!selectedSat) return null;
-    return buildTargetAnalysis(selectedSat, allSatData, simulatedDate);
-  }, [allSatData, selectedSat, simulatedDate]);
+  const windowStartDate = useMemo(
+    () => new Date(Number.isFinite(simBaseTimeMs) ? simBaseTimeMs : Date.now()),
+    [simBaseTimeMs]
+  );
+  const selectedNoradId = selectedSat?.details?.NORAD_CAT_ID ?? null;
+  const effectiveComparedNoradId = focusMode
+    ? focusCounterpartNoradId
+    : comparedNoradId;
   const comparedSat = useMemo(() => {
-    if (!comparedNoradId) return null;
-    return allSatData.find((sat) => sat.details.NORAD_CAT_ID === comparedNoradId) || null;
-  }, [allSatData, comparedNoradId]);
+    if (!effectiveComparedNoradId) return null;
+    return (
+      allSatData.find(
+        (sat) => String(sat.details.NORAD_CAT_ID) === String(effectiveComparedNoradId)
+      ) || null
+    );
+  }, [allSatData, effectiveComparedNoradId]);
+  const priorityNoradIds = useMemo(() => {
+    const ids = new Set();
+
+    const addId = (value) => {
+      if (value !== undefined && value !== null) {
+        ids.add(String(value));
+      }
+    };
+
+    addId(selectedSat?.details?.NORAD_CAT_ID);
+    addId(comparedSat?.details?.NORAD_CAT_ID);
+    addId(activePair?.target_norad_id);
+    addId(activePair?.candidate_norad_id);
+
+    return ids;
+  }, [activePair, comparedSat, selectedSat]);
   const pairReferenceTime = useMemo(() => {
     if (
       activePair?.sampled_tca_minutes === undefined ||
@@ -898,7 +1223,7 @@ export default function Globe({
       : simulatedDate.getTime();
     return new Date(baseTime + activePair.sampled_tca_minutes * 60 * 1000);
   }, [activePair, comparedSat, selectedSat, simulatedDate]);
-  const pairModeActive = Boolean(selectedSat && comparedSat && activePair);
+  const pairModeActive = Boolean(selectedSat && comparedSat && (activePair || focusMode));
   const collisionVisualization = useMemo(() => {
     if (
       scenarioState?.kind !== "collision" ||
@@ -1038,7 +1363,9 @@ export default function Globe({
               const type = normalizeObjectType(sat.OBJECT_TYPE);
               return {
                 satrec: twoline2satrec(sat.TLE_LINE1, sat.TLE_LINE2),
-                color: new THREE.Color(getObjectTypeColor(type)),
+                color: new THREE.Color(
+                  sat.is_synthetic ? SYNTHETIC_MARKER_COLOR : getObjectTypeColor(type)
+                ),
                 type,
                 details: sat,
               };
@@ -1080,21 +1407,77 @@ export default function Globe({
   useEffect(() => {
     if (!selectedSat) return;
 
+    const latestMatch = allSatData.find(
+      (sat) => String(sat.details.NORAD_CAT_ID) === String(selectedSat.details.NORAD_CAT_ID)
+    );
+    if (latestMatch && latestMatch !== selectedSat) {
+      setSelectedSat(latestMatch);
+      return;
+    }
+
     const isVisible = filteredSatData.some(
-      (sat) => sat.details.NORAD_CAT_ID === selectedSat.details.NORAD_CAT_ID
+      (sat) => String(sat.details.NORAD_CAT_ID) === String(selectedSat.details.NORAD_CAT_ID)
     );
 
-    if (!isVisible) {
-      setSelectedSat(null);
-      if (controlsRef.current) {
-        controlsRef.current.target.set(0, 0, 0);
+      if (!isVisible) {
+        setSelectedSat(null);
+        if (controlsRef.current) {
+          controlsRef.current.target.set(0, 0, 0);
+        }
       }
+  }, [allSatData, filteredSatData, selectedSat]);
+
+  useEffect(() => {
+    if (!selectedSat) {
+      analysisRequestIdRef.current += 1;
+      setAnalysisSnapshot(null);
+      return undefined;
     }
-  }, [filteredSatData, selectedSat]);
+
+    setAnalysisSnapshot((current) => (
+      current?.targetNoradId === selectedNoradId ? current : null
+    ));
+    analysisRequestIdRef.current += 1;
+    const requestId = analysisRequestIdRef.current;
+    let cancelled = false;
+    const runLocalAnalysis = () => {
+      if (cancelled) return;
+      const localAnalysis = buildTargetAnalysis(selectedSat, allSatData, windowStartDate);
+      const localTimelineEvents = buildTargetTimelineEvents(selectedSat, allSatData, windowStartDate);
+      if (cancelled || requestId !== analysisRequestIdRef.current) return;
+      setAnalysisSnapshot(
+        localAnalysis
+          ? {
+            ...localAnalysis,
+            targetNoradId: selectedNoradId,
+            timelineEvents: localTimelineEvents,
+          }
+          : null
+      );
+    };
+
+    let handle = null;
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      handle = window.requestIdleCallback(runLocalAnalysis, { timeout: 80 });
+    } else {
+      handle = window.setTimeout(runLocalAnalysis, 0);
+    }
+
+    return () => {
+      cancelled = true;
+      if (typeof window !== "undefined" && typeof window.cancelIdleCallback === "function" && handle) {
+        window.cancelIdleCallback(handle);
+      } else if (handle) {
+        clearTimeout(handle);
+      }
+    };
+  }, [allSatData, selectedNoradId, selectedSat, windowStartDate]);
 
   useEffect(() => {
     if (!selectionClearSignal) return;
+    analysisRequestIdRef.current += 1;
     setSelectedSat(null);
+    setAnalysisSnapshot(null);
     if (controlsRef.current) {
       controlsRef.current.target.set(0, 0, 0);
     }
@@ -1102,15 +1485,20 @@ export default function Globe({
 
   useEffect(() => {
     if (!focusNoradId) return;
-    const match = allSatData.find((sat) => sat.details.NORAD_CAT_ID === focusNoradId);
+    const match = allSatData.find(
+      (sat) => String(sat.details.NORAD_CAT_ID) === String(focusNoradId)
+    );
     if (match) {
       setSelectedSat(match);
     }
   }, [allSatData, focusNoradId]);
 
   useEffect(() => {
-    if (selectedSat && analysisSnapshot) {
-      onTargetChange?.({ target: selectedSat, analysis: analysisSnapshot });
+    if (selectedSat) {
+      onTargetChange?.({
+        target: selectedSat,
+        analysis: analysisSnapshot || null,
+      });
     } else {
       onTargetChange?.(null);
     }
@@ -1136,7 +1524,7 @@ export default function Globe({
     (marker) => {
       if (!marker?.sat) return;
       handleSelectSatellite(marker.sat);
-      onSelectionPing?.({ x: marker.x, y: marker.y });
+      onSelectionPing?.({ x: marker.x, y: marker.y, force: true });
     },
     [handleSelectSatellite, onSelectionPing]
   );
@@ -1190,9 +1578,12 @@ export default function Globe({
           onSelectionPing={onSelectionPing}
           simProgressRef={simProgressRef}
           simOffsetHours={simOffsetHours}
+          simTimeRef={simTimeRef}
+          simBaseTimeMs={simBaseTimeMs}
+          priorityNoradIds={priorityNoradIds}
         />
 
-        {selectedSat && showOrbitalPaths && (
+        {selectedSat && showOrbitalPaths && !selectedSat.details?.is_synthetic && (
           <OrbitPath
             satrec={selectedSat.satrec}
             color={orbitColor}
@@ -1202,7 +1593,7 @@ export default function Globe({
             referenceTime={pairReferenceTime || simulatedDate}
           />
         )}
-        {pairModeActive && showOrbitalPaths ? (
+        {pairModeActive && showOrbitalPaths && !comparedSat?.details?.is_synthetic ? (
           <OrbitPath
             satrec={comparedSat.satrec}
             color={comparedOrbitColor}
@@ -1215,34 +1606,40 @@ export default function Globe({
 
         {selectedSat && !collisionPlaybackActive && (
           <SelectedSatelliteMarker
+            key={`selected-${selectedSat.details.NORAD_CAT_ID}`}
             sat={selectedSat}
             simProgressRef={simProgressRef}
             simOffsetHours={simOffsetHours}
-            referenceTime={pairReferenceTime}
-            forceVisible={pairModeActive}
+            simTimeRef={simTimeRef}
+            simBaseTimeMs={simBaseTimeMs}
+            color={selectedSat.details?.is_synthetic ? SYNTHETIC_MARKER_COLOR : "#f5c842"}
+            useExactPosition={Boolean(selectedSat.details?.is_synthetic)}
           />
         )}
         {selectedSat && comparedSat && !collisionPlaybackActive ? (
           <SelectedSatelliteMarker
+            key={`compared-${comparedSat.details.NORAD_CAT_ID}`}
             sat={comparedSat}
             simProgressRef={simProgressRef}
             simOffsetHours={simOffsetHours}
-            referenceTime={pairReferenceTime}
-            color="#00e5ff"
+            simTimeRef={simTimeRef}
+            simBaseTimeMs={simBaseTimeMs}
+            color={comparedSat.details?.is_synthetic ? SYNTHETIC_MARKER_COLOR : "#00e5ff"}
             markerRadius={0.017}
             haloInnerRadius={0.036}
             haloOuterRadius={0.05}
             haloOpacity={0.58}
-            forceVisible={pairModeActive}
+            useExactPosition={Boolean(comparedSat.details?.is_synthetic)}
           />
         ) : null}
         {pairModeActive && !collisionPlaybackActive ? (
           <PairLink
             leftSat={selectedSat}
             rightSat={comparedSat}
-            referenceTime={pairReferenceTime}
             simOffsetHours={simOffsetHours}
             simProgressRef={simProgressRef}
+            simTimeRef={simTimeRef}
+            simBaseTimeMs={simBaseTimeMs}
           />
         ) : null}
         {collisionPlaybackActive ? (

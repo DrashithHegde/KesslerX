@@ -175,7 +175,15 @@ function formatRuleAction(action) {
   return text;
 }
 
-function DeepAnalysisOverlay({ target, analysis, isOpen, onClose, simTimestamp }) {
+function DeepAnalysisOverlay({
+  target,
+  analysis,
+  activePair,
+  activePairTimelineEvent,
+  isOpen,
+  onClose,
+  simTimestamp,
+}) {
   const [ragExplanation, setRagExplanation] = useState(null);
   const [isRagLoading, setIsRagLoading] = useState(false);
   const isLlmOfflineMessage = (text) => {
@@ -196,24 +204,49 @@ function DeepAnalysisOverlay({ target, analysis, isOpen, onClose, simTimestamp }
     const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
     let isMounted = true;
 
+    const effectiveClosestApproach = activePair
+      ? {
+        objectName: activePair.candidate_name,
+        objectType: activePair.candidate_type,
+        noradId: activePair.candidate_norad_id,
+        currentSeparationKm: activePair.current_separation_km,
+        minSeparationKm: activePair.min_separation_km,
+        sampledTcaMinutes:
+          activePairTimelineEvent?.timeline_minute
+          ?? activePair?.timeline_minute
+          ?? activePair.sampled_tca_minutes,
+        pairRiskScore: activePair.risk_score,
+        pairRiskBand: activePair.risk_band,
+        pairRiskColor: activePair.risk_color ?? analysis.riskColor,
+        eventClass: activePair.event_class,
+        eventLabel: activePair.event_label,
+        isConfirmedCollision: activePair.is_confirmed_collision,
+        zoneCrossingDetected: false,
+        zoneCrossingCells: 0,
+      }
+      : analysis.closestApproach;
+
     const fetchExplanation = async () => {
       setIsRagLoading(true);
       try {
         const payload = {
           norad_id: target.details.NORAD_CAT_ID,
           object_name: target.details.OBJECT_NAME,
-          min_separation_km: analysis.closestApproach ? analysis.closestApproach.minSeparationKm : null,
-          closest_distance_km: analysis.closestApproach ? analysis.closestApproach.minSeparationKm : null,
-          tca_minutes: analysis.closestApproach ? analysis.closestApproach.sampledTcaMinutes : null,
+          min_separation_km: effectiveClosestApproach ? effectiveClosestApproach.minSeparationKm : null,
+          closest_distance_km: effectiveClosestApproach ? effectiveClosestApproach.minSeparationKm : null,
+          tca_minutes: effectiveClosestApproach ? effectiveClosestApproach.sampledTcaMinutes : null,
           uncertainty_score: analysis.uncertaintyScore,
-          risk_score: analysis.riskScore,
-          risk_band: analysis.riskBand,
+          risk_score: activePair?.risk_score ?? analysis.riskScore,
+          risk_band: activePair?.risk_band ?? analysis.riskBand,
           regime: analysis.regime,
           debris_share: analysis.shellDebrisRatio,
           density_band: analysis.densityBand,
           tracked_debris: analysis.shellDebrisCount,
           objects_in_orbital_band: analysis.shellPopulation,
           anomaly_level: analysis.uncertaintyComponents?.anomalyScore,
+          event_class: effectiveClosestApproach?.eventClass ?? null,
+          event_label: effectiveClosestApproach?.eventLabel ?? null,
+          is_confirmed_collision: effectiveClosestApproach?.isConfirmedCollision ?? false,
         };
         const res = await fetch(`${apiBaseUrl}/analysis/explain`, {
           method: "POST",
@@ -242,13 +275,33 @@ function DeepAnalysisOverlay({ target, analysis, isOpen, onClose, simTimestamp }
 
     fetchExplanation();
     return () => { isMounted = false; };
-  }, [isOpen, target, analysis]);
+  }, [activePair, activePairTimelineEvent, analysis, isOpen, target]);
 
   if (!isOpen || !target || !analysis) return null;
 
   const typeColor = getObjectTypeColor(target.type);
   const riskColor = analysis.riskColor;
-  const closestApproach = analysis.closestApproach;
+  const closestApproach = activePair
+    ? {
+      objectName: activePair.candidate_name,
+      objectType: activePair.candidate_type,
+      noradId: activePair.candidate_norad_id,
+      currentSeparationKm: activePair.current_separation_km,
+      minSeparationKm: activePair.min_separation_km,
+      sampledTcaMinutes:
+        activePairTimelineEvent?.timeline_minute
+        ?? activePair?.timeline_minute
+        ?? activePair.sampled_tca_minutes,
+      pairRiskScore: activePair.risk_score,
+      pairRiskBand: activePair.risk_band,
+      pairRiskColor: activePair.risk_color ?? analysis.riskColor,
+      eventClass: activePair.event_class,
+      eventLabel: activePair.event_label,
+      isConfirmedCollision: activePair.is_confirmed_collision,
+      zoneCrossingDetected: false,
+      zoneCrossingCells: 0,
+    }
+    : analysis.closestApproach;
   const currentState = analysis.currentState;
   const timelinePeak = resolveTimelinePeak(analysis.riskTimeline);
   const prioritizedActions = (analysis.mitigations || []).map((item, index) => ({
@@ -636,6 +689,8 @@ function areEqual(prevProps, nextProps) {
     prevProps.isOpen === nextProps.isOpen &&
     prevProps.target === nextProps.target &&
     prevProps.analysis === nextProps.analysis &&
+    prevProps.activePair === nextProps.activePair &&
+    prevProps.activePairTimelineEvent === nextProps.activePairTimelineEvent &&
     prevProps.simTimestamp === nextProps.simTimestamp
   );
 }
