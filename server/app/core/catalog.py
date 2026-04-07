@@ -20,7 +20,7 @@ EARTH_RADIUS_KM = 6371.0
 MU_EARTH_KM3_S2 = 398600.4418
 SCREENING_WINDOW_MINUTES = 90
 SCREENING_STEP_MINUTES = 5
-MAX_ALERT_MIN_SEPARATION_KM = 1500.0
+MAX_ALERT_MIN_SEPARATION_KM = 120.0
 ALERT_SHORTLIST_LIMIT = 18
 UNCERTAINTY_GRID_LAT_STEP_DEG = 12.0
 UNCERTAINTY_GRID_LON_STEP_DEG = 12.0
@@ -132,6 +132,11 @@ def build_catalog_records(raw_catalog: list[dict[str, Any]]) -> list[dict[str, A
                 "altitude_km": altitude_km,
                 "regime": orbital_regime(altitude_km),
                 "is_synthetic": bool(item.get("is_synthetic")),
+                "synthetic_event_class": item.get("synthetic_event_class"),
+                "synthetic_anchor_norad_id": str(item.get("synthetic_anchor_norad_id") or "").strip() or None,
+                "synthetic_event_time_minutes": int(item.get("synthetic_event_time_minutes"))
+                if str(item.get("synthetic_event_time_minutes") or "").strip().isdigit()
+                else None,
                 "satrec": satrec,
             }
         )
@@ -411,6 +416,39 @@ def _risk_color(score: float) -> str:
     return "#00d1ff"
 
 
+def _event_style(event_class: str | None, risk_score: float) -> tuple[str, str, str]:
+    if event_class == "collision":
+        return "COLLISION", "#ff4d5a", "SEVERE"
+    if event_class == "super_close_call":
+        return "SUPER CLOSE CALL", "#ff8c42", "HIGH"
+    if event_class == "close_approach":
+        return "CLOSE APPROACH", "#ffd166", "ELEVATED"
+    return "RISK", _risk_color(risk_score), _risk_band(risk_score)
+
+
+def _classify_alert_event(min_separation_km: float | None) -> str | None:
+    if min_separation_km is None:
+        return None
+    if min_separation_km <= 20.0:
+        return "super_close_call"
+    if min_separation_km <= 80.0:
+        return "close_approach"
+    return None
+
+
+def _synthetic_event_profile_for_pair(
+    target: dict[str, Any],
+    candidate: dict[str, Any],
+) -> tuple[str | None, int | None]:
+    for left, right in ((target, candidate), (candidate, target)):
+        anchor_id = left.get("synthetic_anchor_norad_id")
+        event_class = left.get("synthetic_event_class")
+        event_time_minutes = left.get("synthetic_event_time_minutes")
+        if anchor_id and event_class and anchor_id == right["norad_id"]:
+            return event_class, event_time_minutes
+    return None, None
+
+
 def _density_band(total: int) -> str:
     return (
         "SATURATED"
@@ -544,6 +582,27 @@ def _screen_pair(
         ),
         1,
     )
+    event_class, event_time_minutes = _synthetic_event_profile_for_pair(target, candidate)
+    event_label, event_color, forced_band = _event_style(event_class, risk_score)
+    if event_class == "collision":
+        sampled_tca = event_time_minutes if event_time_minutes is not None else min(sampled_tca or 0, 15)
+        min_separation = 0.0
+        current_separation = min(current_separation, 12.0)
+        risk_score = 100.0
+    elif event_class == "super_close_call":
+        sampled_tca = event_time_minutes if event_time_minutes is not None else sampled_tca
+        min_separation = min(min_separation, 8.0)
+        risk_score = max(risk_score, 92.0)
+    elif event_class == "close_approach":
+        sampled_tca = event_time_minutes if event_time_minutes is not None else sampled_tca
+        min_separation = min(min_separation, 35.0)
+        risk_score = max(risk_score, 76.0)
+    elif risk_score >= 100.0:
+        risk_score = 99.0
+    if event_class is None:
+        event_class = _classify_alert_event(min_separation)
+        event_label, event_color, forced_band = _event_style(event_class, risk_score)
+    risk_score = round(risk_score, 1)
 
     return {
         "target_norad_id": target["norad_id"],
@@ -560,7 +619,12 @@ def _screen_pair(
         "zone_crossing_cells": zone_crossing_cells,
         "zone_risk_penalty": round(zone_crossing_penalty, 1),
         "risk_score": risk_score,
-        "risk_band": _risk_band(risk_score),
+        "risk_band": forced_band,
+        "risk_color": event_color,
+        "event_class": event_class,
+        "event_label": event_label,
+        "event_time_minutes": event_time_minutes,
+        "is_confirmed_collision": event_class == "collision",
     }
 
 
@@ -569,7 +633,21 @@ def build_global_risk_alerts(
     when: datetime,
     high_uncertainty_cells: set[tuple[int, int]] | None = None,
 ) -> list[dict[str, Any]]:
-    payloads = [record for record in records if record["object_type"] == "PAYLOAD"][:160]
+    targeted_anchor_ids = {
+        record["synthetic_anchor_norad_id"]
+        for record in records
+        if record.get("is_synthetic") and record.get("synthetic_anchor_norad_id")
+    }
+    target_candidates = [record for record in records if record["object_type"] == "PAYLOAD"][:160]
+    for record in records:
+        if (
+            not record.get("is_synthetic")
+            and record["norad_id"] in targeted_anchor_ids
+            and not any(existing["norad_id"] == record["norad_id"] for existing in target_candidates)
+        ):
+            target_candidates.append(record)
+
+    payloads = target_candidates
     alerts: list[dict[str, Any]] = []
     fallback_alerts: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, str]] = set()
@@ -633,6 +711,7 @@ def build_global_risk_alerts(
 
     alerts.sort(
         key=lambda alert: (
+            1 if alert.get("is_confirmed_collision") else 0,
             alert["risk_score"],
             -alert["min_separation_km"],
         ),
@@ -643,6 +722,7 @@ def build_global_risk_alerts(
 
     fallback_alerts.sort(
         key=lambda alert: (
+            1 if alert.get("is_confirmed_collision") else 0,
             alert["risk_score"],
             -alert["min_separation_km"],
         ),
@@ -716,7 +796,11 @@ def build_target_analysis(records: list[dict[str, Any]], target_norad_id: str, w
                 "zoneRiskPenalty": alert["zone_risk_penalty"],
                 "pairRiskScore": alert["risk_score"],
                 "pairRiskBand": alert["risk_band"],
-                "pairRiskColor": _risk_color(alert["risk_score"]),
+                "pairRiskColor": alert["risk_color"],
+                "eventClass": alert.get("event_class"),
+                "eventLabel": alert.get("event_label"),
+                "eventTimeMinutes": alert.get("event_time_minutes"),
+                "isConfirmedCollision": alert.get("is_confirmed_collision", False),
             }
         )
 
@@ -742,7 +826,7 @@ def build_target_analysis(records: list[dict[str, Any]], target_norad_id: str, w
         "regime": orbital_regime(target_altitude),
         "riskScore": risk_score,
         "riskBand": _risk_band(risk_score),
-        "riskColor": _risk_color(risk_score),
+        "riskColor": closest_approach["pairRiskColor"] if closest_approach else _risk_color(risk_score),
         "shellPopulation": len(shell_records),
         "shellDebrisCount": shell_debris_count,
         "shellDebrisRatio": shell_debris_ratio,

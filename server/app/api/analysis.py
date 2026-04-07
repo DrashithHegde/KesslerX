@@ -18,6 +18,9 @@ class ExplanationRequest(BaseModel):
     min_separation_km: float | None = None
     closest_distance_km: float | None = None
     tca_minutes: int | None = None
+    event_class: str | None = None
+    event_label: str | None = None
+    is_confirmed_collision: bool | None = None
     uncertainty_score: float | None = None
     risk_score: float | None = None
     risk_band: str | None = None
@@ -105,6 +108,9 @@ async def generate_rag_explanation(req: ExplanationRequest):
         "min_separation_km": req.min_separation_km,
         "closest_distance_km": req.closest_distance_km if req.closest_distance_km is not None else req.min_separation_km,
         "tca_minutes": req.tca_minutes,
+        "event_class": req.event_class,
+        "event_label": req.event_label,
+        "is_confirmed_collision": req.is_confirmed_collision,
         "uncertainty_score": resolved_uncertainty,
         "risk_score": req.risk_score,
         "is_debris_outlier": uncertainty_result.get("is_debris_outlier", False) if "error" not in uncertainty_result else None,

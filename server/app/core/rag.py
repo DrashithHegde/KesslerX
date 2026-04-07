@@ -31,6 +31,8 @@ Mitigation Strategy:
 
 Rules:
 - Use the displayed uncertainty score exactly as provided; never invent a different score.
+- Treat "super_close_call" as a dangerous near-miss that deserves stronger urgency than a routine close approach.
+- Treat "collision" or confirmed collision as deterministic impact language, not probabilistic language.
 - Keep output to 4-8 lines total.
 - Use plain, easy-to-understand language suitable for non-specialist operators.
 - If any factor input is missing, state "insufficient telemetry" for that factor.
@@ -72,6 +74,9 @@ class RAGEngine:
             "norad_id": str(analysis_context.get("norad_id") or ""),
             "risk_band": str(analysis_context.get("risk_band") or ""),
             "regime": str(analysis_context.get("regime") or ""),
+            "event_class": str(analysis_context.get("event_class") or ""),
+            "event_label": str(analysis_context.get("event_label") or ""),
+            "is_confirmed_collision": bool(analysis_context.get("is_confirmed_collision")) if analysis_context.get("is_confirmed_collision") is not None else None,
             "is_debris_outlier": bool(analysis_context.get("is_debris_outlier")) if analysis_context.get("is_debris_outlier") is not None else None,
             "min_separation_km": _num(analysis_context.get("min_separation_km"), 1),
             "closest_distance_km": _num(analysis_context.get("closest_distance_km"), 1),
@@ -112,7 +117,7 @@ class RAGEngine:
         and turns them into a human-readable threat assessment.
         """
         if not self.enabled or not self.llm:
-            return "Advanced AI diagnostics unavailable. [System: GEMINI_API_KEY not configured]."
+            return "LLM Explanation Engine offline. Please check API configuration."
 
         cache_key = self._cache_key(analysis_context)
         cached = self._get_cached(cache_key)
@@ -126,6 +131,9 @@ class RAGEngine:
                 f"Displayed Uncertainty Score: {analysis_context.get('uncertainty_score', 'insufficient telemetry')}%\n"
                 f"Risk Score: {analysis_context.get('risk_score', 'insufficient telemetry')}%\n"
                 f"Risk Band: {analysis_context.get('risk_band', 'insufficient telemetry')}\n"
+                f"Event Class: {analysis_context.get('event_class', 'insufficient telemetry')}\n"
+                f"Event Label: {analysis_context.get('event_label', 'insufficient telemetry')}\n"
+                f"Confirmed Collision: {analysis_context.get('is_confirmed_collision', 'insufficient telemetry')}\n"
                 f"Orbital Regime: {analysis_context.get('regime', 'insufficient telemetry')}\n"
                 f"TCA Minimum Separation (km): {analysis_context.get('min_separation_km', 'insufficient telemetry')}\n"
                 f"Closest Distance (km): {analysis_context.get('closest_distance_km', analysis_context.get('min_separation_km', 'insufficient telemetry'))}\n"
@@ -179,13 +187,16 @@ class RAGEngine:
         uncertainty_score = analysis_context.get("uncertainty_score")
         debris_outlier = analysis_context.get("is_debris_outlier")
         anomaly_score = analysis_context.get("anomaly_score")
+        event_class = analysis_context.get("event_class")
+        risk_band = analysis_context.get("risk_band")
+        tca_minutes = analysis_context.get("tca_minutes")
 
         distance_factor = self._distance_factor(min_separation)
         uncertainty_factor = self._uncertainty_factor(uncertainty_score)
         debris_factor = self._debris_factor(debris_outlier)
         anomaly_factor = self._anomaly_factor(anomaly_score)
-        assessment = self._assessment_line(distance_factor, uncertainty_factor)
-        mitigation_1, mitigation_2 = self._mitigation_lines(distance_factor, uncertainty_factor)
+        assessment = self._assessment_line(event_class, risk_band, distance_factor, uncertainty_factor, tca_minutes)
+        mitigation_1, mitigation_2 = self._mitigation_lines(event_class, risk_band, distance_factor, uncertainty_factor)
 
         return "\n".join(
             [
@@ -209,9 +220,13 @@ class RAGEngine:
             value = float(min_separation)
         except (TypeError, ValueError):
             return "insufficient telemetry"
-        if value < 2.0:
+        if value <= 1.0:
+            return "collision path"
+        if value <= 20.0:
+            return "super close"
+        if value <= 80.0:
             return "close"
-        if value < 10.0:
+        if value <= 300.0:
             return "moderate"
         return "far"
 
@@ -252,23 +267,51 @@ class RAGEngine:
         return "low anomaly signal; confidence is relatively stable"
 
     @staticmethod
-    def _assessment_line(distance_factor: str, uncertainty_factor: str) -> str:
+    def _assessment_line(
+        event_class: Any,
+        risk_band: Any,
+        distance_factor: str,
+        uncertainty_factor: str,
+        tca_minutes: Any,
+    ) -> str:
         if distance_factor == "insufficient telemetry" or uncertainty_factor == "insufficient telemetry":
             return "insufficient telemetry for full risk interpretation."
+        try:
+            tca_value = float(tca_minutes)
+        except (TypeError, ValueError):
+            tca_value = None
+        if bool(event_class == "collision"):
+            return "Tracked geometry indicates a collision event inside the active screening window."
+        if event_class == "super_close_call":
+            if tca_value is not None and tca_value <= 120:
+                return "A super-close conjunction is approaching inside the active window and deserves immediate operator attention."
+            return "A super-close conjunction is present in the active window and remains operationally dangerous even without confirmed impact."
+        if distance_factor in {"collision path", "super close"} and uncertainty_factor in {"medium", "high"}:
+            return "Proximity is extremely tight and environmental uncertainty increases residual hazard around the encounter."
         if distance_factor == "close" and uncertainty_factor in {"medium", "high"}:
             return "Proximity is tight and environmental uncertainty is elevated."
-        if distance_factor == "moderate" and uncertainty_factor == "high":
-            return "Separation is moderate, but uncertainty is high and increases residual risk."
+        if distance_factor == "moderate" and (uncertainty_factor == "high" or str(risk_band) in {"HIGH", "SEVERE"}):
+            return "Separation is moderate, but surrounding risk context keeps the event operationally significant."
         return "Current proximity and uncertainty indicate a manageable but monitored risk posture."
 
     @staticmethod
-    def _mitigation_lines(distance_factor: str, uncertainty_factor: str) -> tuple[str, str]:
-        if distance_factor == "close":
+    def _mitigation_lines(
+        event_class: Any,
+        risk_band: Any,
+        distance_factor: str,
+        uncertainty_factor: str,
+    ) -> tuple[str, str]:
+        if bool(event_class == "collision"):
             return (
-                "Prioritize near-term conjunction screening updates at higher cadence.",
-                "Prepare a conservative avoidance option and hold review readiness.",
+                "Escalate immediately and halt nominal timeline assumptions because the event is collision-confirmed.",
+                "Assess mission loss, debris-generation consequences, and downstream conjunction cascade risk.",
             )
-        if uncertainty_factor == "high":
+        if event_class == "super_close_call" or distance_factor in {"collision path", "super close"}:
+            return (
+                "Increase tracking cadence immediately and validate the conjunction with higher-fidelity propagation.",
+                "Prepare an avoidance option or stand-down decision before the event window tightens further.",
+            )
+        if uncertainty_factor == "high" or str(risk_band) in {"HIGH", "SEVERE"}:
             return (
                 "Increase tracking cadence and validate inputs from additional sources.",
                 "Use conservative decision thresholds until uncertainty decreases.",
