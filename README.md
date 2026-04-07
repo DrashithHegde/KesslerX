@@ -1,90 +1,314 @@
-# KesslerX
+# 🚀 KesslerX
 
-KesslerX is a space surveillance and orbital risk intelligence system that models satellite motion, estimates collision risk (including from untracked debris), and provides explainable, actionable insights to help prevent cascading events like the Kessler syndrome.
+### Orbital Risk and Space Debris Cascade Simulation Platform
 
 ---
 
-## 🌍 Impact
+## 🌌 Overview
 
-- **Space sustainability:** Prevents runaway debris growth and loss of orbital access.
-- **Operator safety:** Provides actionable, explainable risk insights for satellite operators and mission planners.
-- **Research & education:** Demonstrates uncertainty-aware risk modeling and scenario simulation for the space community.
+KesslerX is a real-time orbital intelligence and risk analysis system designed to monitor satellite motion, detect potential collision risks, model uncertain debris environments, and simulate cascading orbital events.
+
+It transforms raw orbital data into actionable insights using a combination of physics-based modeling, machine learning, and AI-driven explanations.
+
+Unlike traditional tracking tools, KesslerX goes beyond known objects to model **uncertainty and hidden risk in Earth’s orbital environment**.
+
+---
+
+## ⚠️ Problem Statement
+
+Earth’s orbit is increasingly congested with active satellites and debris, leading to a growing risk of collisions.
+
+A major threat is the **Kessler Syndrome**, where collisions generate debris that trigger further collisions, potentially making orbital regions unusable.
+
+Existing systems:
+
+* Focus on tracking known objects
+* Provide raw positional data
+
+But they lack:
+
+* intuitive visualization
+* uncertainty-aware modeling
+* explainable risk insights
+
+---
+
+## 🎯 Solution
+
+KesslerX is a **decision-support and simulation system** that:
+
+* Tracks satellites in real time
+* Detects close approaches and risk events
+* Models uncertain and potentially dangerous regions
+* Simulates collision scenarios and cascade effects
+* Generates explainable insights using AI
 
 ---
 
 ## 🛰️ Key Features
 
-- **Live 3D Globe Visualization:** Real-time, highly performant Three.js + React-Globe rendering of thousands of satellites, debris objects, and their orbital tracks simultaneously.
-- **Physics-Accurate SGP4 Engine:** Leverages standard Two-Line Element (TLE) satellite data and the SGP4 propagation model to continuously forecast spatial locations.
-- **Dynamic Risk Detection:** Continuously screens the satellite catalog to identify high-risk conjunctions, predicting exact Time of Closest Approach (TCA) and minimum separation distances.
-- **ML Uncertainty Modeling:** Analyzes dense orbital shells using an Isolation Forest anomaly detection model to generate hidden/untracked "uncertainty" scores that modify baseline kinetic risks.
-- **Generative AI Risk Analyst:** Integrates the Google Gemini API (via RAG) to dynamically convert complex spatial anomalies into actionable English mitigation advice.
-- **Interactive Kessler Cascades:** 
-  - **Inject Risk:** Empowers the user to artificially introduce a synthetic collision interceptor onto a tracked satellite.
-  - **Start Collision:** Triggers a visually immersive cascading explosion, instantly fracturing satellites into a physical debris cloud of 150 tracked fragments that mathematically split from the impact vector and degrade local orbital safety over time.
-- **Timeline Scrubbing:** Native controls to advance real-world simulation time backward and forward to review incoming threat forecasts and past behavior.
+### 🌍 Live 3D Visualization
+
+* Interactive Earth with satellites and debris
+* Smooth orbital motion using real-time propagation
+* Cinematic and minimal UI
+
+---
+
+### ⚙️ Physics-Based Orbital Engine
+
+* Uses TLE (Two-Line Element) data
+* Propagates motion using SGP4
+* Predicts satellite positions over time
+
+---
+
+### ⚠️ Dynamic Risk Detection
+
+* Identifies close approaches (conjunctions)
+* Computes:
+
+  * Time of Closest Approach (TCA)
+  * Minimum separation distance
+* Assigns a risk score
+
+---
+
+### 🌫️ Uncertainty Zone Modeling
+
+* Divides space into spatial regions (lat/lon grid)
+
+* Evaluates:
+
+  * object density
+  * debris ratio
+  * velocity variance
+  * orbital instability
+  * anomaly score (ML)
+
+* Outputs probabilistic risk zones (not exact threats)
+
+---
+
+### 🤖 Machine Learning (Anomaly Detection)
+
+* Model: Isolation Forest (scikit-learn)
+* Detects:
+
+  * unusual clustering
+  * abnormal orbital behavior
+* Contributes to uncertainty scoring
+
+---
+
+### 💥 Scenario Simulation Engine
+
+* Inject synthetic satellites
+* Trigger collision events
+* Generate debris clouds
+* Simulate cascade effects
+
+---
+
+### 🎬 Cinematic Simulation Mode
+
+* Focus on selected object and relevant threats
+* Reduces clutter for clearer analysis
+
+---
+
+### ⏱️ Timeline & Event System
+
+* Precomputed event timestamps (6-hour window)
+
+* Displays:
+
+  * close approaches
+  * high-risk events
+  * collision points
+
+* Color-coded markers
+
+* Events remain fixed during playback (no recomputation)
+
+---
+
+### 📊 Deep Analysis Dashboard
+
+* Risk score
+* Closest objects
+* Debris environment metrics
+* Orbital regime
+* Structured insights
+
+---
+
+### 🧠 AI Operational Brief (RAG)
+
+* Model: Gemini 2.5 Flash
+* Uses structured system outputs as context
+* Generates:
+
+  * explanation
+  * reasoning
+  * mitigation suggestions
+
+> AI is used for explainability, not core decision-making.
 
 ---
 
 ## ⚙️ Tech Stack
 
-| Layer      | Technology                        |
-|------------|-----------------------------------|
-| Frontend   | React (Vite), Three.js, Tailwind  |
-| Orbital    | satellite.js, python-sgp4         |
-| Backend    | FastAPI (Python)                  |
-| ML         | scikit-learn (Isolation Forest)   |
-| Cache      | Redis                             |
-| GenAI      | Google Gemini API (`gemini-2.5`)  |
+### Frontend
+
+* React (Vite)
+* Three.js + React Three Fiber
+* Tailwind CSS
 
 ---
 
-## 🚀 How to Run the Webapp
+### Backend
 
-### 1. Prerequisites
-- **Node.js** (v18+)
-- **Python** (v3.11+)
-- **Redis Server** (Must be running locally or remotely to manage synthetic satellite state caches).
+* FastAPI (Python)
+* httpx
+* pydantic + dotenv
 
-### 2. Configure Environment Variables
-You will need to set up local environment keys for the system to boot up, specifically the Google Gemini API key:
+---
 
-**Backend (`server/.env`):**
-```ini
-GEMINI_API_KEY="your-gemini-api-key"
-```
+### Orbital Computation
 
-### 3. Spin up Database Containers
-Start up the required background services (Redis for caching synthetic states, and Postgres) using Docker Compose from the repository root:
+* satellite.js (frontend)
+* python-sgp4 (backend)
 
-```bash
-docker-compose up -d
-```
+---
 
-### 4. Start the Backend Server
+### Data
+
+* Space-Track TLE API
+* Local cache
+
+---
+
+### Machine Learning
+
+* scikit-learn (Isolation Forest)
+* NumPy
+
+---
+
+### AI / RAG
+
+* Gemini 2.5 Flash
+* LangChain (wrapper only)
+
+---
+
+### Optional Infrastructure
+
+* Redis (caching & simulation state)
+* Docker (deployment)
+
+---
+
+## 🔄 System Workflow
+
+1. Fetch satellite data (TLE)
+2. Propagate orbits using SGP4
+3. Detect close approaches
+4. Compute risk scores
+5. Generate uncertainty zones
+6. Apply anomaly detection
+7. Simulate scenarios
+8. Generate AI insights
+
+---
+
+## 👥 Who Benefits
+
+### 🛰️ Satellite Operators (small–mid scale)
+
+* Improved risk awareness
+* Better understanding of close approaches
+
+---
+
+### 🧠 Researchers & Students
+
+* Learn orbital mechanics visually
+* Experiment with simulations
+
+---
+
+### 📊 Space Analytics & Consulting
+
+* Decision-support and demonstration tool
+
+---
+
+### 🌍 Space Sustainability & Policy Groups
+
+* Visualize debris growth
+* Understand cascade risks
+
+---
+
+### 🎓 Educational Use
+
+* Makes complex space concepts intuitive
+* Strong visualization-driven learning
+
+---
+
+## ⚠️ Scope & Limitations
+
+* Not a real-time control system
+* Does not execute collision avoidance maneuvers
+* Depends on public TLE data
+* Uncertainty zones are probabilistic
+* Limited simulation window (6 hours)
+
+---
+
+## 🚀 Future Scope
+
+* Temporal smoothing of uncertainty zones
+* Advanced ML models
+* Long-term debris prediction
+* Real maneuver simulation
+* Integration with real-world systems
+
+---
+
+## 💡 Positioning
+
+KesslerX is not just a tracker—it is an **orbital intelligence system** that combines physics, machine learning, and AI to provide deeper insights into collision risk, uncertainty, and space sustainability.
+
+---
+
+## 🏁 Getting Started
+
+### Prerequisites
+
+* Node.js (v18+)
+* Python (v3.10+)
+
+---
+
+### Backend Setup
 
 ```bash
 cd server
 python -m venv .venv
-
-# Activate virtual environment
-# On Windows:
-.venv\Scripts\activate
-# On Mac/Linux:
-source .venv/bin/activate
-
-# Install requirements
+source .venv/bin/activate   # or .venv\Scripts\activate (Windows)
 pip install -r requirements.txt
 
-# Run the FastAPI server (Runs on port 8000 by default)
-fastapi dev main.py
-# Or run via the provided runner:
+# Run server
 python run.py
 ```
 
-### 4. Start the Frontend Client
+---
 
-Ensure the backend and your Redis instance are both running. Then start the frontend:
+### Frontend Setup
 
 ```bash
 cd client
@@ -92,20 +316,8 @@ npm install
 npm run dev
 ```
 
-The webapp should now be accessible at `http://localhost:5173`.
-
 ---
 
-## 🧠 Example Operations
+## 🎯 Final Tagline
 
-1. **Find an Alert:** Look at the Top Bar dashboard for active threat anomalies in saturated orbits.
-2. **Review Risk:** Click on a target. The Deep Analysis Overlay will query the Gemini API to formulate mitigation logic.
-3. **Trigger Kessler Benchmark:** Click the `Inject Risk` button located on the Bottom Bar. This will calculate a mathematically flawless interception course.
-4. **Initiate Blast:** Click `Start Collision` to witness the SGP4 kinetic disintegration, flooding the region with a tracked debris cloud that immediately threatens surrounding units.
-
----
-
-## 📚 References
-
-- [Kessler Syndrome - Wikipedia](https://en.wikipedia.org/wiki/Kessler_syndrome)
-- [Space-Track.org](https://www.space-track.org/) - Public TLE distribution source.
+From orbital data to actionable intelligence — understanding risk, uncertainty, and the future of space.
