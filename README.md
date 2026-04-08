@@ -1,10 +1,10 @@
-# 🚀 KesslerX
+# KesslerX
 
 ### Orbital Risk and Space Debris Cascade Simulation Platform
 
 ---
 
-## 🌌 Overview
+## Overview
 
 KesslerX is a real-time orbital intelligence and risk analysis system designed to monitor satellite motion, detect potential collision risks, model uncertain debris environments, and simulate cascading orbital events.
 
