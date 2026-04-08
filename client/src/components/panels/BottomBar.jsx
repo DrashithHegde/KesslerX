@@ -57,28 +57,28 @@ function CompactChip({
   const palette = disabled
     ? {
       border: "1px solid rgba(0,229,255,0.08)",
-      background: "rgba(11,15,20,0.44)",
+      background: "linear-gradient(180deg, rgba(12,18,24,0.58), rgba(9,13,18,0.74))",
       color: "rgba(200,214,229,0.24)",
       shadow: "none",
     }
     : tone === "warning"
       ? {
-        border: "1px solid rgba(0,229,255,0.28)",
-        background: "rgba(0,229,255,0.08)",
-        color: "rgba(0,229,255,0.86)",
-        shadow: "0 0 12px rgba(0,229,255,0.1)",
+        border: "1px solid rgba(0,229,255,0.32)",
+        background: "linear-gradient(180deg, rgba(0,229,255,0.14), rgba(0,229,255,0.05))",
+        color: "rgba(145,247,255,0.96)",
+        shadow: "0 0 14px rgba(0,229,255,0.12)",
       }
       : active
         ? {
-          border: "1px solid rgba(0,229,255,0.42)",
-          background: "rgba(0,229,255,0.1)",
+          border: "1px solid rgba(0,229,255,0.46)",
+          background: "linear-gradient(180deg, rgba(0,229,255,0.18), rgba(0,229,255,0.06))",
           color: "rgba(0,229,255,0.9)",
-          shadow: "0 0 14px rgba(0,229,255,0.12), inset 0 0 8px rgba(0,229,255,0.05)",
+          shadow: "0 0 16px rgba(0,229,255,0.14), inset 0 0 10px rgba(0,229,255,0.06)",
         }
         : {
-          border: "1px solid rgba(0,229,255,0.12)",
-          background: "rgba(11,15,20,0.72)",
-          color: "rgba(200,214,229,0.62)",
+          border: "1px solid rgba(0,229,255,0.14)",
+          background: "linear-gradient(180deg, rgba(14,20,26,0.82), rgba(8,12,18,0.92))",
+          color: "rgba(214,228,239,0.72)",
           shadow: "none",
         };
 
@@ -89,15 +89,15 @@ function CompactChip({
       disabled={disabled}
       style={{
         minWidth,
-        padding: "5px 10px",
+        padding: "7px 12px",
         borderRadius: 999,
         border: palette.border,
         background: palette.background,
         color: palette.color,
         boxShadow: palette.shadow,
         fontFamily: "'DM Mono', monospace",
-        fontSize: "0.5rem",
-        letterSpacing: "0.16em",
+        fontSize: "0.56rem",
+        letterSpacing: "0.14em",
         textTransform: "uppercase",
         whiteSpace: "nowrap",
         transition: "all 0.2s ease",
@@ -126,10 +126,12 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
         onClick={handleClick}
         style={{
           position: "relative",
-          height: 7,
+          height: 10,
           borderRadius: 999,
-          background: "rgba(0,229,255,0.08)",
-          border: "1px solid rgba(0,229,255,0.08)",
+          background:
+            "linear-gradient(180deg, rgba(0,229,255,0.07), rgba(0,229,255,0.03))",
+          border: "1px solid rgba(0,229,255,0.12)",
+          boxShadow: "inset 0 0 18px rgba(0,229,255,0.05)",
           cursor: "pointer",
           overflow: "visible",
         }}
@@ -143,7 +145,8 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
             width: `${progress * 100}%`,
             borderRadius: 999,
             background:
-              "linear-gradient(90deg, rgba(0,229,255,0.72), rgba(0,229,255,0.24))",
+              "linear-gradient(90deg, rgba(0,229,255,0.95), rgba(74,222,255,0.42))",
+            boxShadow: "0 0 20px rgba(0,229,255,0.18)",
           }}
         />
 
@@ -156,7 +159,7 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
                   left: `${marker.position * 100}%`,
                   bottom: `calc(100% + ${index % 2 === 0 ? 10 : 24}px)`,
                   transform: "translateX(-50%)",
-                  fontSize: "0.42rem",
+                  fontSize: "0.48rem",
                   letterSpacing: "0.12em",
                   color: marker.color,
                   textTransform: "uppercase",
@@ -172,11 +175,11 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
                 left: `${marker.position * 100}%`,
                 top: "50%",
                 transform: "translate(-50%, -50%)",
-                width: marker.label ? 8 : 7,
-                height: marker.label ? 8 : 7,
+                width: marker.label ? 9 : 8,
+                height: marker.label ? 9 : 8,
                 borderRadius: "50%",
                 background: marker.color,
-                boxShadow: `0 0 8px ${marker.color}`,
+                boxShadow: `0 0 12px ${marker.color}`,
                 border: "1px solid rgba(4,7,11,0.9)",
               }}
               title={marker.title || undefined}
@@ -190,12 +193,12 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
             top: "50%",
             left: `${progress * 100}%`,
             transform: "translate(-50%, -50%)",
-            width: 13,
-            height: 13,
+            width: 16,
+            height: 16,
             borderRadius: "50%",
-            background: "#0b0f14",
-            border: "1px solid rgba(0,229,255,0.78)",
-            boxShadow: "0 0 12px rgba(0,229,255,0.28)",
+            background: "radial-gradient(circle at 35% 35%, #8ef7ff 0%, #00cfe8 45%, #081118 100%)",
+            border: "1px solid rgba(190,252,255,0.78)",
+            boxShadow: "0 0 18px rgba(0,229,255,0.36)",
           }}
         />
       </div>
@@ -210,8 +213,6 @@ export default function BottomBar({
   onSimPause,
   onSimComplete,
   onSimSpeedChange,
-  onSimTriggerCollision,
-  onStartCollisionSimulation,
   onSimReset,
   onOpenAnalysis,
   analysisAvailable,
@@ -220,9 +221,7 @@ export default function BottomBar({
   onSimProgressChange,
   focusMode = false,
   onToggleFocusMode,
-  activeScenario = null,
   timelineEvents = [],
-  riskInjected = false,
 }) {
   const [timelineProgress, setTimelineProgress] = useState(0);
   const rafRef = useRef(null);
@@ -326,10 +325,6 @@ export default function BottomBar({
     syncProgress(0, { forceSync: true });
     onSimReset();
   };
-  const collisionReady =
-    activeScenario?.kind === "collision" && !activeScenario?.collisionStarted;
-  const collisionActive =
-    activeScenario?.kind === "collision" && activeScenario?.collisionStarted;
   const scenarioTimelineMarkers = Array.isArray(timelineEvents)
     ? timelineEvents
       .map((event, index) => {
@@ -369,34 +364,34 @@ export default function BottomBar({
           width: "760px",
           maxWidth: "100%",
           borderRadius: 14,
-          padding: "9px 12px 10px",
+          padding: "11px 14px 12px",
           border: "1px solid rgba(0,229,255,0.13)",
-          boxShadow: "0 10px 30px rgba(0,0,0,0.42)",
+          boxShadow: "0 14px 34px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.02)",
           background:
-            "linear-gradient(180deg, rgba(11,15,20,0.82), rgba(8,12,18,0.9))",
+            "linear-gradient(180deg, rgba(11,15,20,0.9), rgba(7,11,16,0.95))",
         }}
       >
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 10,
-            minHeight: 34,
+            gap: 12,
+            minHeight: 40,
           }}
         >
           <button
             type="button"
             onClick={handlePlayPause}
             style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              border: "1px solid rgba(0,229,255,0.28)",
-              background: "rgba(0,229,255,0.08)",
+              width: 38,
+              height: 38,
+              borderRadius: 10,
+              border: "1px solid rgba(0,229,255,0.34)",
+              background: "linear-gradient(180deg, rgba(0,229,255,0.16), rgba(0,229,255,0.05))",
               color: "#00e5ff",
               fontFamily: "'DM Mono', monospace",
-              fontSize: "0.72rem",
-              boxShadow: "0 0 12px rgba(0,229,255,0.1)",
+              fontSize: "0.9rem",
+              boxShadow: "0 0 16px rgba(0,229,255,0.12)",
               cursor: "pointer",
               transition: "all 0.2s ease",
               flexShrink: 0,
@@ -407,9 +402,13 @@ export default function BottomBar({
 
           <div
             style={{
-              fontSize: "0.48rem",
-              letterSpacing: "0.16em",
-              color: "rgba(200,214,229,0.34)",
+              padding: "7px 12px",
+              borderRadius: 999,
+              border: "1px solid rgba(0,229,255,0.12)",
+              background: "rgba(11,15,20,0.56)",
+              fontSize: "0.56rem",
+              letterSpacing: "0.14em",
+              color: "rgba(214,228,239,0.56)",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
               flexShrink: 0,
@@ -418,20 +417,52 @@ export default function BottomBar({
             {simRunning ? "Playback live" : "Scenario standby"}
           </div>
 
-          <SweepTimeline
-            progress={timelineProgress}
-            onSeek={handleSeek}
-            markers={scenarioTimelineMarkers}
-          />
+          <div
+            style={{
+              flex: 1,
+              minWidth: 180,
+              display: "grid",
+              gap: 7,
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid rgba(0,229,255,0.08)",
+              background: "linear-gradient(180deg, rgba(11,15,20,0.54), rgba(7,11,16,0.76))",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                fontSize: "0.5rem",
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+              }}
+            >
+              <span style={{ color: "rgba(200,214,229,0.38)" }}>Screen Window</span>
+              <span style={{ color: "rgba(255,209,102,0.72)" }}>{scenarioTimelineMarkers.length} markers</span>
+            </div>
+            <SweepTimeline
+              progress={timelineProgress}
+              onSeek={handleSeek}
+              markers={scenarioTimelineMarkers}
+            />
+          </div>
 
           <div
             style={{
-              fontSize: "0.5rem",
-              letterSpacing: "0.18em",
-              color: "rgba(0,229,255,0.72)",
+              padding: "7px 12px",
+              borderRadius: 999,
+              border: "1px solid rgba(0,229,255,0.18)",
+              background: "rgba(0,229,255,0.06)",
+              fontSize: "0.58rem",
+              letterSpacing: "0.16em",
+              color: "rgba(111,241,255,0.88)",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
               flexShrink: 0,
+              boxShadow: "0 0 14px rgba(0,229,255,0.08)",
             }}
           >
             T+ {formatSimTime(timelineProgress)}
@@ -441,12 +472,12 @@ export default function BottomBar({
         <div
           style={{
             marginTop: 8,
-            paddingTop: 8,
+            paddingTop: 10,
             borderTop: "1px solid rgba(0,229,255,0.08)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 10,
+            gap: 12,
             flexWrap: "wrap",
           }}
         >
@@ -454,15 +485,19 @@ export default function BottomBar({
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 10,
               flexWrap: "wrap",
+              padding: "7px 10px",
+              borderRadius: 12,
+              border: "1px solid rgba(0,229,255,0.08)",
+              background: "rgba(11,15,20,0.42)",
             }}
           >
             <span
               style={{
-                fontSize: "0.48rem",
-                letterSpacing: "0.16em",
-                color: "rgba(200,214,229,0.34)",
+                fontSize: "0.54rem",
+                letterSpacing: "0.14em",
+                color: "rgba(200,214,229,0.42)",
                 textTransform: "uppercase",
               }}
             >
@@ -483,24 +518,15 @@ export default function BottomBar({
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 10,
               flexWrap: "wrap",
               justifyContent: "flex-end",
+              padding: "7px 10px",
+              borderRadius: 12,
+              border: "1px solid rgba(0,229,255,0.08)",
+              background: "rgba(11,15,20,0.42)",
             }}
           >
-            <CompactChip
-              label={simActionPending ? "Working" : riskInjected ? "Deinject Risk" : "Inject Risk"}
-              onClick={onSimTriggerCollision}
-              tone="warning"
-              disabled={simActionPending}
-            />
-            <CompactChip
-              label={collisionActive ? "Collision Live" : "Start Collision"}
-              onClick={onStartCollisionSimulation}
-              tone="warning"
-              active={collisionActive}
-              disabled={simActionPending || !collisionReady}
-            />
             <CompactChip
               label="Focus Mode"
               onClick={onToggleFocusMode}

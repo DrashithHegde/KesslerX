@@ -51,7 +51,7 @@ class RAGEngine:
         if self.enabled:
             try:
                 self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.5-flash",
+                    model="gemini-3-flash-preview",
                     api_key=settings.gemini_api_key,
                     temperature=0.2
                 )
@@ -154,8 +154,23 @@ class RAGEngine:
             ]
             
             response = await self.llm.ainvoke(messages)
-            content = response.content if hasattr(response, "content") else ""
-            result = self._coerce_plain_operational_brief(str(content or "").strip(), analysis_context)
+            raw_content = response.content if hasattr(response, "content") else ""
+
+            # Gemini may return content as a list of content parts
+            # (e.g. [{'type': 'text', 'text': '...', 'extras': {...}}])
+            # rather than a plain string. Extract just the text.
+            if isinstance(raw_content, list):
+                text_parts = []
+                for part in raw_content:
+                    if isinstance(part, dict) and "text" in part:
+                        text_parts.append(part["text"])
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                content = "\n".join(text_parts)
+            else:
+                content = str(raw_content or "")
+
+            result = self._coerce_plain_operational_brief(content.strip(), analysis_context)
             self._set_cached(cache_key, result, self.cache_ttl_seconds)
             return result
             

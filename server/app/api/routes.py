@@ -54,6 +54,15 @@ def load_cache() -> list[dict] | None:
     return None
 
 
+def load_baseline_cache() -> list[dict] | None:
+    try:
+        if LOCAL_BASELINE_CACHE_PATH.exists():
+            return json.loads(LOCAL_BASELINE_CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error("Baseline cache read error: %s", e)
+    return None
+
+
 def load_cache_source() -> str | None:
     if redis_client:
         try:
@@ -204,14 +213,32 @@ async def get_satellites() -> dict:
                 source=cache_source,
             )
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        source = "spacetrack"
-        if not settings.spacetrack_user or not settings.spacetrack_pass:
-            raise HTTPException(
-                status_code=500,
-                detail="Space-Track credentials not configured.",
+    baseline_data = load_baseline_cache()
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            source = "spacetrack"
+            if not settings.spacetrack_user or not settings.spacetrack_pass:
+                raise RuntimeError("Space-Track credentials not configured.")
+            satellites = await fetch_spacetrack_catalog(client)
+    except Exception as exc:
+        logger.error("Space-Track fetch failed, attempting cache fallback: %s", exc)
+        fallback_data = data or baseline_data
+        fallback_source = cache_source if data else "baseline"
+        if fallback_data:
+            fallback_age = get_cache_age() if data else None
+            return build_satellite_response(
+                fallback_data,
+                cached=True,
+                status="degraded_cache_fallback",
+                cache_age_seconds=fallback_age,
+                source=fallback_source,
             )
-        satellites = await fetch_spacetrack_catalog(client)
+
+        detail = str(exc) or "Satellite catalog unavailable."
+        if isinstance(exc, HTTPException):
+            raise exc
+        raise HTTPException(status_code=500, detail=detail)
 
     save_cache(satellites, source)
     logger.info("Fetched %s satellite records from %s and updated cache", len(satellites), source)

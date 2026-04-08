@@ -35,7 +35,6 @@ const EARTH_OCCLUSION_RADIUS = EARTH_RADIUS * 1.01;
 const SELECTED_MARKER_OCCLUSION_PADDING = SELECTED_MARKER_RADIUS;
 const IMPACT_PROXIMITY_THRESHOLD_KM = 900;
 const COLLISION_WAVE_THRESHOLD_KM = 1800;
-const ZONE_UNIT_VECTOR = new THREE.Vector3(0, 0, 1);
 const BACKGROUND_INTERPOLATION_STEP_MS = 90000;
 const PRIORITY_INTERPOLATION_STEP_MS = 30000;
 const BACKGROUND_MOTION_DAMPING = 11;
@@ -384,50 +383,127 @@ function smoothstep(edge0, edge1, value) {
 
 function zoneColor(score) {
   if (score >= 80) return "#ff4d5a";
-  if (score >= 60) return "#ffb347";
+  if (score >= 60) return "#ff9f43";
+  if (score >= 40) return "#ffd166";
   return "#3fa9f5";
 }
 
+function latLonToCartesian(radius, latDeg, lonDeg) {
+  const latRad = THREE.MathUtils.degToRad(latDeg);
+  const lonRad = THREE.MathUtils.degToRad(lonDeg);
+  return [
+    radius * Math.cos(latRad) * Math.cos(lonRad),
+    radius * Math.sin(latRad),
+    radius * Math.cos(latRad) * Math.sin(lonRad),
+  ];
+}
+
+function UncertaintyZoneMarker({ zone, index, displayScore }) {
+  const groupRef = useRef();
+  const shellRef = useRef();
+  const color = zoneColor(displayScore);
+  const altitudeKm = Math.min(zone.avg_altitude_km ?? 0, 1800);
+  const radius = EARTH_RADIUS + 0.024 + altitudeKm / 6371;
+  const [x, y, z] = useMemo(
+    () => latLonToCartesian(radius, zone.lat ?? 0, zone.lon ?? 0),
+    [radius, zone.lat, zone.lon]
+  );
+  const severity = THREE.MathUtils.clamp(displayScore / 100, 0, 1);
+  const cellSizeDeg = Number(zone.cell_size_deg ?? 12);
+  const debrisRatio = THREE.MathUtils.clamp(Number(zone.debris_ratio ?? 0) / 100, 0, 1);
+  const objectDensityBoost = Math.min((zone.total_objects ?? 0) / 260, 0.065);
+  const altitudeSpreadBoost = Math.min(Math.sqrt(Number(zone.altitude_variance ?? 0)) / 420, 0.03);
+  const angularRadius =
+    THREE.MathUtils.degToRad(cellSizeDeg) * (0.16 + severity * 0.06 + debrisRatio * 0.05);
+  const shellRadius =
+    radius * angularRadius + objectDensityBoost + altitudeSpreadBoost + severity * 0.008;
+
+  useFrame((state) => {
+    const t = state.clock.getElapsedTime();
+    const pulse = 1 + Math.sin(t * (1.1 + index * 0.05)) * (0.018 + severity * 0.012);
+
+    if (groupRef.current) {
+      groupRef.current.scale.setScalar(pulse);
+    }
+    if (shellRef.current) {
+      shellRef.current.rotation.y += 0.0011;
+      shellRef.current.rotation.x += 0.0005;
+      shellRef.current.material.opacity = 0.12 + severity * 0.12;
+      shellRef.current.material.emissiveIntensity = 0.22 + severity * 0.22;
+    }
+  });
+
+  return (
+    <group position={[x, y, z]}>
+      <group ref={groupRef}>
+        <mesh ref={shellRef} renderOrder={4}>
+          <sphereGeometry args={[shellRadius, 22, 22]} />
+          <meshStandardMaterial
+            color={color}
+            transparent
+            opacity={0.2}
+            emissive={color}
+            emissiveIntensity={0.3}
+            roughness={0.3}
+            metalness={0.05}
+            depthTest
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+function ZoneLights() {
+  return (
+    <>
+      <ambientLight intensity={0.28} color="#dbeafe" />
+      <directionalLight position={[3.6, 2.4, 4.8]} intensity={0.5} color="#ffffff" />
+      <directionalLight position={[-4, -2.4, -3.6]} intensity={0.2} color="#7dd3fc" />
+    </>
+  );
+}
+
 function UncertaintyZones({ zones = [] }) {
-  const visibleZones = zones.slice(0, 18);
+  const visibleZones = zones.slice(0, 12);
+  const displayZones = useMemo(() => {
+    if (!visibleZones.length) return [];
+
+    const scores = visibleZones.map((zone) => Number(zone.uncertainty_score ?? 0));
+    const minScore = Math.min(...scores);
+    const maxScore = Math.max(...scores);
+
+    return visibleZones.map((zone, index) => {
+      const rawScore = Number(zone.uncertainty_score ?? 0);
+      const normalized =
+        maxScore > minScore ? ((rawScore - minScore) / (maxScore - minScore)) * 100 : rawScore;
+      const boostedScore = Math.max(
+        rawScore >= 68 ? 84 : 0,
+        rawScore >= 64 ? 66 : 0,
+        rawScore >= 60 ? 46 : 0,
+        normalized
+      );
+
+      return {
+        zone,
+        index,
+        displayScore: THREE.MathUtils.clamp(boostedScore, 0, 100),
+      };
+    });
+  }, [visibleZones]);
 
   return (
     <group>
-      {visibleZones.map((zone, index) => {
-        const score = zone.uncertainty_score ?? 0;
-        const color = zoneColor(score);
-        const altitudeKm = Math.min(zone.avg_altitude_km ?? 0, 1600);
-        const radius = EARTH_RADIUS + 0.012 + altitudeKm / 6371;
-        const latRad = THREE.MathUtils.degToRad(zone.lat ?? 0);
-        const lonRad = THREE.MathUtils.degToRad(zone.lon ?? 0);
-        const x = radius * Math.cos(latRad) * Math.cos(lonRad);
-        const y = radius * Math.sin(latRad);
-        const z = radius * Math.cos(latRad) * Math.sin(lonRad);
-        const normal = new THREE.Vector3(x, y, z).normalize();
-        const quaternion = new THREE.Quaternion().setFromUnitVectors(ZONE_UNIT_VECTOR, normal);
-        const cellSize = zone.cell_size_deg ?? 10;
-        const patchRadius = THREE.MathUtils.clamp((cellSize / 180) * 1.1, 0.05, 0.2);
-        const opacity = Math.min(0.36, 0.08 + score * 0.0025);
-
-        return (
-          <mesh
-            key={`${zone.lat}-${zone.lon}-${index}`}
-            position={[x, y, z]}
-            quaternion={quaternion}
-          >
-            <circleGeometry args={[patchRadius, 28]} />
-            <meshBasicMaterial
-              color={color}
-              transparent
-              opacity={opacity}
-              depthWrite={false}
-              toneMapped={false}
-              side={THREE.DoubleSide}
-              blending={THREE.AdditiveBlending}
-            />
-          </mesh>
-        );
-      })}
+      {displayZones.map(({ zone, index, displayScore }) => (
+        <UncertaintyZoneMarker
+          key={`${zone.lat}-${zone.lon}-${zone.avg_altitude_km ?? "na"}-${index}`}
+          zone={zone}
+          index={index}
+          displayScore={displayScore}
+        />
+      ))}
     </group>
   );
 }
@@ -761,18 +837,21 @@ function PairLink({
   simProgressRef,
   simTimeRef,
   simBaseTimeMs,
-  color = "#77dcff",
+  color = "#ff7b5f",
 }) {
   const lineRef = useRef();
+  const glowLineRef = useRef();
   const leftMotionRef = useRef({});
   const rightMotionRef = useRef({});
   const leftRef = useMemo(() => new THREE.Vector3(), []);
   const rightRef = useMemo(() => new THREE.Vector3(), []);
-  const targetVectorRef = useMemo(() => new THREE.Vector3(), []);
-  const exactVectorRef = useMemo(() => new THREE.Vector3(), []);
+  const leftTargetVectorRef = useMemo(() => new THREE.Vector3(), []);
+  const leftExactVectorRef = useMemo(() => new THREE.Vector3(), []);
+  const rightTargetVectorRef = useMemo(() => new THREE.Vector3(), []);
+  const rightExactVectorRef = useMemo(() => new THREE.Vector3(), []);
 
   useFrame((_, delta) => {
-    if (!lineRef.current || !leftSat?.satrec || !rightSat?.satrec) return;
+    if (!lineRef.current || !glowLineRef.current || !leftSat?.satrec || !rightSat?.satrec) return;
 
     const simTimeMs = getContinuousSimTimeMs({
       referenceTime,
@@ -789,8 +868,8 @@ function PairLink({
       deltaSeconds: delta,
       sampleStepMs: PRIORITY_INTERPOLATION_STEP_MS,
       damping: PRIORITY_MOTION_DAMPING,
-      targetVector: targetVectorRef,
-      exactVector: exactVectorRef,
+      targetVector: leftTargetVectorRef,
+      exactVector: leftExactVectorRef,
       useExactPosition: Boolean(leftSat?.details?.is_synthetic),
     });
     const rightMotion = getSmoothedMotionState({
@@ -801,8 +880,8 @@ function PairLink({
       deltaSeconds: delta,
       sampleStepMs: PRIORITY_INTERPOLATION_STEP_MS,
       damping: PRIORITY_MOTION_DAMPING,
-      targetVector: targetVectorRef,
-      exactVector: exactVectorRef,
+      targetVector: rightTargetVectorRef,
+      exactVector: rightExactVectorRef,
       useExactPosition: Boolean(rightSat?.details?.is_synthetic),
     });
     if (!leftMotion || !rightMotion) return;
@@ -818,27 +897,49 @@ function PairLink({
     positions[4] = rightRef.y;
     positions[5] = rightRef.z;
     lineRef.current.geometry.attributes.position.needsUpdate = true;
-    lineRef.current.computeLineDistances?.();
+    lineRef.current.geometry.computeBoundingSphere();
+    glowLineRef.current.geometry.attributes.position.array.set(positions);
+    glowLineRef.current.geometry.attributes.position.needsUpdate = true;
+    glowLineRef.current.geometry.computeBoundingSphere();
   });
 
   return (
-    <line ref={lineRef} renderOrder={8}>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[new Float32Array(6), 3]}
-          count={2}
-          itemSize={3}
+    <group>
+      <line ref={glowLineRef} renderOrder={7} frustumCulled={false}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array(6), 3]}
+            count={2}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial
+          color={color}
+          transparent
+          opacity={0.24}
+          depthTest={false}
+          toneMapped={false}
         />
-      </bufferGeometry>
-      <lineBasicMaterial
-        color={color}
-        transparent
-        opacity={0.75}
-        depthTest={false}
-        toneMapped={false}
-      />
-    </line>
+      </line>
+      <line ref={lineRef} renderOrder={8} frustumCulled={false}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[new Float32Array(6), 3]}
+            count={2}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial
+          color={color}
+          transparent
+          opacity={0.92}
+          depthTest={false}
+          toneMapped={false}
+        />
+      </line>
+    </group>
   );
 }
 
@@ -1568,6 +1669,7 @@ export default function Globe({
           speed={1}
         />
 
+        <ZoneLights />
         <CRTEarth />
         <UncertaintyZones zones={uncertaintyZones} />
 
@@ -1583,7 +1685,7 @@ export default function Globe({
           priorityNoradIds={priorityNoradIds}
         />
 
-        {selectedSat && showOrbitalPaths && !selectedSat.details?.is_synthetic && (
+        {selectedSat && showOrbitalPaths && !pairModeActive && !selectedSat.details?.is_synthetic && (
           <OrbitPath
             satrec={selectedSat.satrec}
             color={orbitColor}
@@ -1593,17 +1695,6 @@ export default function Globe({
             referenceTime={pairReferenceTime || simulatedDate}
           />
         )}
-        {pairModeActive && showOrbitalPaths && !comparedSat?.details?.is_synthetic ? (
-          <OrbitPath
-            satrec={comparedSat.satrec}
-            color={comparedOrbitColor}
-            pastColor={comparedOrbitColor}
-            futureColor={comparedOrbitColor}
-            opacity={0.42}
-            referenceTime={pairReferenceTime || simulatedDate}
-          />
-        ) : null}
-
         {selectedSat && !collisionPlaybackActive && (
           <SelectedSatelliteMarker
             key={`selected-${selectedSat.details.NORAD_CAT_ID}`}

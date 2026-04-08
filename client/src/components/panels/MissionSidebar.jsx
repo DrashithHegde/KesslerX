@@ -64,7 +64,7 @@ function LayerChip({ config, active, onClick }) {
     >
       <span
         style={{
-          fontSize: "0.52rem",
+          fontSize: "0.58rem",
           color: active ? "rgba(0,229,255,0.82)" : "rgba(200,214,229,0.42)",
           borderRight: "1px solid rgba(0,229,255,0.08)",
           paddingRight: 8,
@@ -75,7 +75,7 @@ function LayerChip({ config, active, onClick }) {
       <div style={{ minWidth: 0 }}>
         <div
           style={{
-            fontSize: "0.56rem",
+            fontSize: "0.64rem",
             letterSpacing: "0.08em",
             textTransform: "uppercase",
           }}
@@ -85,7 +85,7 @@ function LayerChip({ config, active, onClick }) {
         <div
           style={{
             marginTop: 2,
-            fontSize: "0.48rem",
+            fontSize: "0.54rem",
             lineHeight: 1.35,
             color: "rgba(200,214,229,0.42)",
           }}
@@ -120,6 +120,7 @@ function TabButton({ active, label, onClick }) {
         background: active ? "rgba(0,229,255,0.08)" : "transparent",
         color: active ? "rgba(0,229,255,0.9)" : "rgba(200,214,229,0.46)",
         fontSize: "0.5rem",
+        fontSize: "0.58rem",
         letterSpacing: "0.18em",
         textTransform: "uppercase",
       }}
@@ -143,6 +144,7 @@ function SectionTitle({ children, right }) {
       <span
         style={{
           fontSize: "0.48rem",
+          fontSize: "0.56rem",
           letterSpacing: "0.17em",
           textTransform: "uppercase",
           color: "rgba(200,214,229,0.5)",
@@ -154,6 +156,7 @@ function SectionTitle({ children, right }) {
         <span
           style={{
             fontSize: "0.46rem",
+            fontSize: "0.52rem",
             letterSpacing: "0.12em",
             textTransform: "uppercase",
             color: "rgba(0,229,255,0.58)",
@@ -221,8 +224,65 @@ function FiltersView({
 }
 
 function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) {
+  const tierCounts = alerts.reduce(
+    (counts, alert) => {
+      const band = alert?.risk_band || "LOW";
+      counts[band] = (counts[band] || 0) + 1;
+      return counts;
+    },
+    { SEVERE: 0, HIGH: 0, ELEVATED: 0, LOW: 0 }
+  );
+
   return (
     <div style={{ display: "grid", gap: 8 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 6,
+          marginBottom: 2,
+        }}
+      >
+        {[
+          { key: "SEVERE", color: "#ff5f57" },
+          { key: "HIGH", color: "#ff8c42" },
+          { key: "ELEVATED", color: "#ffd166" },
+          { key: "LOW", color: "#00d1ff" },
+        ].map((tier) => (
+          <div
+            key={tier.key}
+            style={{
+              borderRadius: 8,
+              border: "1px solid rgba(0,229,255,0.08)",
+              background: "rgba(11,15,20,0.38)",
+              padding: "8px 6px",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "0.42rem",
+                fontSize: "0.48rem",
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: tier.color,
+              }}
+            >
+              {tier.key}
+            </div>
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: "0.66rem",
+                color: "rgba(255,255,255,0.86)",
+              }}
+            >
+              {tierCounts[tier.key] || 0}
+            </div>
+          </div>
+        ))}
+      </div>
+
       {alerts.length > 0 ? (
         alerts.map((alert) => (
           (() => {
@@ -258,6 +318,7 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                   <span
                     style={{
                       fontSize: "0.48rem",
+                      fontSize: "0.54rem",
                       letterSpacing: "0.14em",
                       color: accent.chip,
                       textTransform: "uppercase",
@@ -265,14 +326,14 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                   >
                     {alert.event_label || alert.risk_band}
                   </span>
-                  <span style={{ fontSize: "0.48rem", color: "rgba(200,214,229,0.46)" }}>
+                  <span style={{ fontSize: "0.54rem", color: "rgba(200,214,229,0.46)" }}>
                     {alert.risk_score}%
                   </span>
                 </div>
-                <div style={{ marginTop: 6, fontSize: "0.58rem", lineHeight: 1.45 }}>
+                <div style={{ marginTop: 6, fontSize: "0.68rem", lineHeight: 1.45 }}>
                   {alert.target_name}
                 </div>
-                <div style={{ marginTop: 3, fontSize: "0.48rem", color: accent.detail }}>
+                <div style={{ marginTop: 3, fontSize: "0.56rem", color: accent.detail }}>
                   vs {alert.candidate_name}
                 </div>
                 <div
@@ -282,6 +343,7 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                     justifyContent: "space-between",
                     gap: 12,
                     fontSize: "0.46rem",
+                    fontSize: "0.52rem",
                     color: "rgba(200,214,229,0.36)",
                     textTransform: "uppercase",
                   }}
@@ -294,6 +356,7 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                     style={{
                       marginTop: 7,
                       fontSize: "0.44rem",
+                      fontSize: "0.5rem",
                       letterSpacing: "0.12em",
                       textTransform: "uppercase",
                       color: "rgba(0,229,255,0.62)",
@@ -307,6 +370,7 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                     style={{
                       marginTop: 7,
                       fontSize: "0.44rem",
+                      fontSize: "0.5rem",
                       letterSpacing: "0.12em",
                       textTransform: "uppercase",
                       color: "rgba(0,229,255,0.62)",
@@ -320,8 +384,8 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
           })()
         ))
       ) : (
-        <div style={{ fontSize: "0.54rem", color: "rgba(200,214,229,0.38)", lineHeight: 1.6 }}>
-          No elevated conjunction alerts in the current screening window.
+        <div style={{ fontSize: "0.62rem", color: "rgba(200,214,229,0.38)", lineHeight: 1.6 }}>
+          No conjunction alerts survived the current screening window.
         </div>
       )}
     </div>
@@ -344,9 +408,9 @@ export default function MissionSidebar({
   const tabMeta = useMemo(
     () => ({
       filters: { label: "Filters" },
-      alerts: { label: "Alerts" },
+      alerts: { label: `Alerts ${alerts.length ? `(${alerts.length})` : ""}`.trim() },
     }),
-    []
+    [alerts.length]
   );
 
   return (
@@ -376,6 +440,7 @@ export default function MissionSidebar({
           <div
             style={{
               fontSize: "0.48rem",
+              fontSize: "0.56rem",
               letterSpacing: "0.2em",
               color: "rgba(0,229,255,0.64)",
               textTransform: "uppercase",
@@ -386,7 +451,7 @@ export default function MissionSidebar({
           <div
             style={{
               marginTop: 4,
-              fontSize: "0.5rem",
+              fontSize: "0.58rem",
               lineHeight: 1.45,
               color: "rgba(200,214,229,0.5)",
               letterSpacing: "0.04em",

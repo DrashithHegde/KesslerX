@@ -1,6 +1,5 @@
 import { memo, useEffect, useState } from "react";
 import { formatUtc, getObjectTypeColor } from "../../utils/orbitalAnalysis";
-import TrendSparkline from "../ui/TrendSparkline";
 
 function MetricCard({ label, value, accent = "var(--cyan)", tier = "secondary" }) {
   const isPrimary = tier === "primary";
@@ -19,6 +18,7 @@ function MetricCard({ label, value, accent = "var(--cyan)", tier = "secondary" }
       <div
         style={{
           fontSize: isPrimary ? "0.5rem" : "0.52rem",
+          fontSize: isPrimary ? "0.58rem" : "0.6rem",
           color: "var(--text-dim)",
           letterSpacing: isPrimary ? "0.13em" : "0.12em",
           textTransform: "uppercase",
@@ -30,7 +30,7 @@ function MetricCard({ label, value, accent = "var(--cyan)", tier = "secondary" }
         style={{
           marginTop: 5,
           fontFamily: "'DM Mono', monospace",
-          fontSize: isPrimary ? "1.56rem" : isTertiary ? "0.95rem" : "1.08rem",
+          fontSize: isPrimary ? "1.68rem" : isTertiary ? "1.04rem" : "1.16rem",
           color: accent,
           fontWeight: isPrimary ? 700 : 600,
           lineHeight: isPrimary ? 1.1 : 1.2,
@@ -47,6 +47,7 @@ function SectionLabel({ children }) {
     <div
       style={{
         fontSize: "0.58rem",
+        fontSize: "0.66rem",
         letterSpacing: "0.2em",
         color: "var(--text-dim)",
         textTransform: "uppercase",
@@ -86,6 +87,7 @@ function SnapshotMetric({ label, value, accent = "rgba(255,255,255,0.9)" }) {
       <div
         style={{
           fontSize: "0.52rem",
+          fontSize: "0.6rem",
           color: "var(--text-dim)",
           letterSpacing: "0.11em",
           textTransform: "uppercase",
@@ -96,7 +98,7 @@ function SnapshotMetric({ label, value, accent = "rgba(255,255,255,0.9)" }) {
       </div>
       <div
         style={{
-          fontSize: "0.72rem",
+          fontSize: "0.8rem",
           color: accent,
           letterSpacing: "0.04em",
           lineHeight: 1.35,
@@ -256,7 +258,9 @@ function DeepAnalysisOverlay({
         const data = await res.json();
         if (isMounted) {
           const resolved = (data.explanation || data.detail || "").trim();
+          console.log("[KesslerX RAG] Response:", { status: res.status, explanation: resolved?.substring(0, 200), full: data });
           if (!resolved || isLlmOfflineMessage(resolved)) {
+            console.warn("[KesslerX RAG] Explanation filtered out:", resolved);
             setRagExplanation(null);
           } else {
             setRagExplanation(resolved);
@@ -303,7 +307,7 @@ function DeepAnalysisOverlay({
     }
     : analysis.closestApproach;
   const currentState = analysis.currentState;
-  const timelinePeak = resolveTimelinePeak(analysis.riskTimeline);
+
   const prioritizedActions = (analysis.mitigations || []).map((item, index) => ({
     id: `${index}-${item}`,
     priority: `Priority ${index + 1}`,
@@ -346,6 +350,7 @@ function DeepAnalysisOverlay({
             <div
               style={{
                 fontSize: "0.62rem",
+                fontSize: "0.7rem",
                 letterSpacing: "0.2em",
                 color: "rgba(0,229,255,0.55)",
                 textTransform: "uppercase",
@@ -358,6 +363,7 @@ function DeepAnalysisOverlay({
               style={{
                 fontFamily: "'Syne', sans-serif",
                 fontSize: "1.35rem",
+                fontSize: "1.5rem",
                 fontWeight: 700,
                 color: "rgba(255,255,255,0.94)",
                 letterSpacing: "0.04em",
@@ -370,6 +376,7 @@ function DeepAnalysisOverlay({
               style={{
                 marginTop: 7,
                 fontSize: "0.64rem",
+                fontSize: "0.72rem",
                 color: "var(--text-dim)",
                 letterSpacing: "0.11em",
               }}
@@ -389,6 +396,7 @@ function DeepAnalysisOverlay({
               borderRadius: 8,
               padding: "9px 14px",
               fontSize: "0.62rem",
+              fontSize: "0.7rem",
               letterSpacing: "0.14em",
               textTransform: "uppercase",
               cursor: "pointer",
@@ -452,19 +460,12 @@ function DeepAnalysisOverlay({
           </div>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-            gap: 16,
-            alignItems: "start",
-          }}
-        >
           <div className="glass" style={{ padding: 14, borderRadius: 10 }}>
             <SectionLabel>AI Operational Brief</SectionLabel>
             <div
               style={{
                 fontSize: "0.66rem",
+                fontSize: "0.74rem",
                 color: "var(--text)",
                 lineHeight: 1.6,
                 letterSpacing: "0.04em",
@@ -486,6 +487,7 @@ function DeepAnalysisOverlay({
                 gap: 8,
                 marginTop: 14,
                 fontSize: "0.6rem",
+                fontSize: "0.68rem",
                 color: "var(--text-dim)",
                 letterSpacing: "0.08em",
               }}
@@ -502,74 +504,6 @@ function DeepAnalysisOverlay({
               />
             </div>
           </div>
-
-          <div className="glass" style={{ padding: 14, borderRadius: 10 }}>
-            <SectionLabel>Risk Timeline (Now to T+90M)</SectionLabel>
-            <div
-              style={{
-                marginBottom: 8,
-                fontSize: "0.56rem",
-                color: "rgba(200,214,229,0.46)",
-                letterSpacing: "0.05em",
-                lineHeight: 1.45,
-              }}
-            >
-              Risk trend over the screening window; peak values indicate highest conjunction urgency.
-            </div>
-            <div
-              style={{
-                height: 170,
-                borderBottom: "1px solid rgba(0,229,255,0.16)",
-                position: "relative",
-                marginBottom: 8,
-              }}
-            >
-              <div
-                style={{
-                  position: "absolute",
-                  left: 8,
-                  top: 8,
-                  display: "grid",
-                  gap: 4,
-                  zIndex: 2,
-                  fontSize: "0.44rem",
-                  color: "rgba(200,214,229,0.36)",
-                  letterSpacing: "0.08em",
-                }}
-              >
-                <span>HIGH</span>
-                <span>ELEVATED</span>
-                <span>LOW</span>
-              </div>
-              <TrendSparkline data={analysis.riskTimeline} color={riskColor} />
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: "0.52rem",
-                color: "rgba(200,214,229,0.33)",
-                letterSpacing: "0.1em",
-              }}
-            >
-              <span>NOW</span>
-              <span>SCREENED RISK PROFILE</span>
-              <span>T+90M</span>
-            </div>
-            <div
-              style={{
-                marginTop: 6,
-                fontSize: "0.5rem",
-                color: "rgba(255,209,102,0.75)",
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-              }}
-            >
-              {timelinePeak ? `Peak risk ${timelinePeak.value}% at ${timelinePeak.label}` : "Peak risk annotation unavailable"}
-            </div>
-
-          </div>
-        </div>
 
         <div className="glass" style={{ marginTop: 16, padding: 14, borderRadius: 10 }}>
           <SectionLabel>Closest Approach Details</SectionLabel>
@@ -629,7 +563,7 @@ function DeepAnalysisOverlay({
               </div>
             </>
           ) : (
-            <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", letterSpacing: "0.05em" }}>
+            <div style={{ fontSize: "0.7rem", color: "var(--text-dim)", letterSpacing: "0.05em" }}>
               No close tracked approach was found inside the current screening window.
             </div>
           )}
@@ -652,6 +586,7 @@ function DeepAnalysisOverlay({
                   <div
                     style={{
                       fontSize: "0.48rem",
+                      fontSize: "0.56rem",
                       color: "rgba(255,209,102,0.9)",
                       letterSpacing: "0.16em",
                       textTransform: "uppercase",
@@ -663,6 +598,7 @@ function DeepAnalysisOverlay({
                   <div
                     style={{
                       fontSize: "0.62rem",
+                      fontSize: "0.7rem",
                       color: "var(--text)",
                       lineHeight: 1.48,
                       letterSpacing: "0.04em",
@@ -674,7 +610,7 @@ function DeepAnalysisOverlay({
               ))}
             </ul>
           ) : (
-            <div style={{ fontSize: "0.62rem", color: "var(--text-dim)", letterSpacing: "0.05em" }}>
+            <div style={{ fontSize: "0.7rem", color: "var(--text-dim)", letterSpacing: "0.05em" }}>
               No rule-based actions required at the current risk level.
             </div>
           )}

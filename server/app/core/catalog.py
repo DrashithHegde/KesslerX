@@ -20,8 +20,15 @@ EARTH_RADIUS_KM = 6371.0
 MU_EARTH_KM3_S2 = 398600.4418
 SCREENING_WINDOW_MINUTES = 90
 SCREENING_STEP_MINUTES = 5
-MAX_ALERT_MIN_SEPARATION_KM = 120.0
-ALERT_SHORTLIST_LIMIT = 18
+MAX_ALERT_MIN_SEPARATION_KM = 160.0
+FALLBACK_ALERT_MIN_SEPARATION_KM = 280.0
+ALERT_SHORTLIST_LIMIT = 36
+ALERT_TARGET_LIMIT = 320
+ALERT_TARGET_ALTITUDE_BAND_KM = 180.0
+PER_TARGET_ALERT_LIMIT = 2
+GLOBAL_ALERT_LIMIT = 16
+MIN_PRIMARY_ALERT_RISK_SCORE = 38.0
+MIN_FALLBACK_ALERT_RISK_SCORE = 22.0
 UNCERTAINTY_GRID_LAT_STEP_DEG = 12.0
 UNCERTAINTY_GRID_LON_STEP_DEG = 12.0
 UNCERTAINTY_CELL_LIMIT = 24
@@ -380,6 +387,22 @@ def _candidate_score(target: dict[str, Any], candidate: dict[str, Any]) -> float
     return altitude_delta * 1.1 + inclination_delta * 0.45
 
 
+def _alert_target_priority(record: dict[str, Any]) -> tuple[int, int, float]:
+    object_type = record.get("object_type")
+    if object_type == "PAYLOAD":
+        type_priority = 0
+    elif object_type == "ROCKET BODY":
+        type_priority = 1
+    elif object_type == "DEBRIS":
+        type_priority = 2
+    else:
+        type_priority = 3
+
+    synthetic_priority = 0 if record.get("synthetic_anchor_norad_id") else 1
+    altitude = record.get("altitude_km") or 0.0
+    return (type_priority, synthetic_priority, altitude)
+
+
 def _risk_band(score: float) -> str:
     if score >= 80:
         return "SEVERE"
@@ -638,7 +661,11 @@ def build_global_risk_alerts(
         for record in records
         if record.get("is_synthetic") and record.get("synthetic_anchor_norad_id")
     }
-    target_candidates = [record for record in records if record["object_type"] == "PAYLOAD"][:160]
+    target_candidates = [
+        record
+        for record in records
+        if record["object_type"] in {"PAYLOAD", "ROCKET BODY"}
+    ]
     for record in records:
         if (
             not record.get("is_synthetic")
@@ -647,7 +674,8 @@ def build_global_risk_alerts(
         ):
             target_candidates.append(record)
 
-    payloads = target_candidates
+    target_candidates.sort(key=_alert_target_priority)
+    payloads = target_candidates[:ALERT_TARGET_LIMIT]
     alerts: list[dict[str, Any]] = []
     fallback_alerts: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, str]] = set()
@@ -659,11 +687,11 @@ def build_global_risk_alerts(
             if candidate["norad_id"] != target["norad_id"]
             and candidate["altitude_km"] is not None
             and target["altitude_km"] is not None
-            and abs(candidate["altitude_km"] - target["altitude_km"]) <= 120
+            and abs(candidate["altitude_km"] - target["altitude_km"]) <= ALERT_TARGET_ALTITUDE_BAND_KM
         ]
         candidates.sort(key=lambda candidate: _candidate_score(target, candidate))
-        best_alert: dict[str, Any] | None = None
-        best_fallback_alert: dict[str, Any] | None = None
+        target_alerts: list[dict[str, Any]] = []
+        target_fallback_alerts: list[dict[str, Any]] = []
 
         for candidate in candidates[:ALERT_SHORTLIST_LIMIT]:
             pair_key = tuple(sorted((target["norad_id"], candidate["norad_id"])))
@@ -677,37 +705,38 @@ def build_global_risk_alerts(
 
             # Relaxed candidate pool used only if strict filtering yields no alerts.
             if (
-                alert["min_separation_km"] <= (MAX_ALERT_MIN_SEPARATION_KM * 2.0)
-                and alert["risk_score"] >= 25
+                alert["min_separation_km"] <= FALLBACK_ALERT_MIN_SEPARATION_KM
+                and alert["risk_score"] >= MIN_FALLBACK_ALERT_RISK_SCORE
             ):
-                if (
-                    best_fallback_alert is None
-                    or alert["risk_score"] > best_fallback_alert["risk_score"]
-                    or (
-                        alert["risk_score"] == best_fallback_alert["risk_score"]
-                        and alert["min_separation_km"] < best_fallback_alert["min_separation_km"]
-                    )
-                ):
-                    best_fallback_alert = alert
+                target_fallback_alerts.append(alert)
 
             if (
                 alert["min_separation_km"] <= MAX_ALERT_MIN_SEPARATION_KM
-                and alert["risk_score"] >= 45
+                and alert["risk_score"] >= MIN_PRIMARY_ALERT_RISK_SCORE
             ):
-                if (
-                    best_alert is None
-                    or alert["risk_score"] > best_alert["risk_score"]
-                    or (
-                        alert["risk_score"] == best_alert["risk_score"]
-                        and alert["min_separation_km"] < best_alert["min_separation_km"]
-                    )
-                ):
-                    best_alert = alert
+                target_alerts.append(alert)
 
-        if best_alert:
-            alerts.append(best_alert)
-        elif best_fallback_alert:
-            fallback_alerts.append(best_fallback_alert)
+        target_alerts.sort(
+            key=lambda alert: (
+                1 if alert.get("is_confirmed_collision") else 0,
+                alert["risk_score"],
+                -alert["min_separation_km"],
+            ),
+            reverse=True,
+        )
+        target_fallback_alerts.sort(
+            key=lambda alert: (
+                1 if alert.get("is_confirmed_collision") else 0,
+                alert["risk_score"],
+                -alert["min_separation_km"],
+            ),
+            reverse=True,
+        )
+
+        if target_alerts:
+            alerts.extend(target_alerts[:PER_TARGET_ALERT_LIMIT])
+        elif target_fallback_alerts:
+            fallback_alerts.extend(target_fallback_alerts[:PER_TARGET_ALERT_LIMIT])
 
     alerts.sort(
         key=lambda alert: (
@@ -718,7 +747,7 @@ def build_global_risk_alerts(
         reverse=True,
     )
     if alerts:
-        return alerts[:8]
+        return alerts[:GLOBAL_ALERT_LIMIT]
 
     fallback_alerts.sort(
         key=lambda alert: (
@@ -728,7 +757,7 @@ def build_global_risk_alerts(
         ),
         reverse=True,
     )
-    return fallback_alerts[:8]
+    return fallback_alerts[:GLOBAL_ALERT_LIMIT]
 
 
 def build_target_analysis(records: list[dict[str, Any]], target_norad_id: str, when: datetime) -> dict[str, Any] | None:

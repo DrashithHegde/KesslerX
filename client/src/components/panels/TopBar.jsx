@@ -49,6 +49,7 @@ export default function TopBar({
               style={{
                 fontFamily: "'Syne', sans-serif",
                 fontSize: "1.1rem",
+                fontSize: "1.2rem",
                 fontWeight: 700,
                 letterSpacing: "0.14em",
                 color: "rgba(255,255,255,0.88)",
@@ -61,6 +62,7 @@ export default function TopBar({
             <div
               style={{
                 fontSize: "0.5rem",
+                fontSize: "0.58rem",
                 letterSpacing: "0.24em",
                 color: "rgba(0,229,255,0.5)",
                 textTransform: "uppercase",
@@ -76,6 +78,7 @@ export default function TopBar({
           style={{
             marginTop: 6,
             fontSize: "0.52rem",
+            fontSize: "0.58rem",
             letterSpacing: "0.18em",
             color: "rgba(217,127,42,0.7)",
           }}
@@ -95,6 +98,7 @@ export default function TopBar({
             justifyContent: "flex-end",
             gap: 6,
             fontSize: "0.62rem",
+            fontSize: "0.7rem",
             color: "rgba(255,59,59,0.85)",
             letterSpacing: "0.1em",
           }}
@@ -119,6 +123,7 @@ export default function TopBar({
           style={{
             marginTop: 4,
             fontSize: "0.56rem",
+            fontSize: "0.64rem",
             color: "rgba(0,229,255,0.55)",
             letterSpacing: "0.1em",
             fontFamily: "'DM Mono', monospace",
@@ -131,6 +136,7 @@ export default function TopBar({
           style={{
             marginTop: 2,
             fontSize: "0.5rem",
+            fontSize: "0.58rem",
             letterSpacing: "0.2em",
             color: "rgba(200,214,229,0.28)",
           }}
@@ -142,6 +148,7 @@ export default function TopBar({
           style={{
             marginTop: 2,
             fontSize: "0.48rem",
+            fontSize: "0.56rem",
             letterSpacing: "0.2em",
             color: "rgba(200,214,229,0.28)",
           }}
@@ -153,6 +160,7 @@ export default function TopBar({
           style={{
             marginTop: 2,
             fontSize: "0.5rem",
+            fontSize: "0.58rem",
             letterSpacing: "0.2em",
             color: "rgba(200,214,229,0.28)",
           }}

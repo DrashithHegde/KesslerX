@@ -42,6 +42,7 @@ function SectionLabel({ children, status, statusColor = "rgba(0,229,255,0.6)" })
       <span
         style={{
           fontSize: "0.54rem",
+          fontSize: "0.62rem",
           letterSpacing: "0.2em",
           color: "var(--text-dim)",
           textTransform: "uppercase",
@@ -53,6 +54,7 @@ function SectionLabel({ children, status, statusColor = "rgba(0,229,255,0.6)" })
         <span
           style={{
             fontSize: "0.48rem",
+            fontSize: "0.56rem",
             letterSpacing: "0.16em",
             color: statusColor,
             textTransform: "uppercase",
@@ -79,6 +81,7 @@ function StatGridCard({ label, value, accent = "rgba(255,255,255,0.86)" }) {
       <div
         style={{
           fontSize: "0.46rem",
+          fontSize: "0.54rem",
           letterSpacing: "0.16em",
           color: "rgba(200,214,229,0.34)",
           textTransform: "uppercase",
@@ -89,7 +92,7 @@ function StatGridCard({ label, value, accent = "rgba(255,255,255,0.86)" }) {
       <div
         style={{
           marginTop: 5,
-          fontSize: "0.72rem",
+          fontSize: "0.82rem",
           letterSpacing: "0.06em",
           color: accent,
           fontWeight: 600,
@@ -109,7 +112,7 @@ function DetailRow({ label, value, accent }) {
         justifyContent: "space-between",
         gap: 14,
         padding: "5px 0",
-        fontSize: "0.56rem",
+        fontSize: "0.64rem",
         letterSpacing: "0.06em",
       }}
     >
@@ -158,6 +161,7 @@ function NearbyObjectRow({ item, active, onClick, rank = 1 }) {
         <div
           style={{
             fontSize: "0.56rem",
+            fontSize: "0.64rem",
             letterSpacing: "0.05em",
             color: active ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.8)",
             lineHeight: 1.35,
@@ -173,7 +177,7 @@ function NearbyObjectRow({ item, active, onClick, rank = 1 }) {
         <div
           style={{
             marginTop: 3,
-            fontSize: "0.46rem",
+            fontSize: "0.54rem",
             letterSpacing: "0.08em",
             color: active ? "rgba(255,209,102,0.92)" : getObjectTypeColor(item.objectType),
             textTransform: "uppercase",
@@ -192,6 +196,7 @@ function NearbyObjectRow({ item, active, onClick, rank = 1 }) {
         <div
           style={{
             fontSize: "0.56rem",
+            fontSize: "0.64rem",
             color: active ? "rgba(255,209,102,0.92)" : "rgba(0,229,255,0.82)",
           }}
         >
@@ -200,7 +205,7 @@ function NearbyObjectRow({ item, active, onClick, rank = 1 }) {
         <div
           style={{
             marginTop: 3,
-            fontSize: "0.45rem",
+            fontSize: "0.52rem",
             color: "rgba(200,214,229,0.3)",
             letterSpacing: "0.06em",
             lineHeight: 1.25,
@@ -424,6 +429,7 @@ export default function TacticalInsightPanel({
                 <div
                   style={{
                     fontSize: "0.5rem",
+                    fontSize: "0.58rem",
                     letterSpacing: "0.16em",
                     color: "rgba(0,229,255,0.58)",
                     textTransform: "uppercase",
@@ -434,7 +440,7 @@ export default function TacticalInsightPanel({
                 <div
                   style={{
                     marginTop: 7,
-                    fontSize: "0.84rem",
+                    fontSize: "0.96rem",
                     lineHeight: 1.35,
                     letterSpacing: "0.04em",
                     color: "rgba(255,255,255,0.92)",
@@ -522,7 +528,7 @@ export default function TacticalInsightPanel({
                     <div
                       style={{
                         padding: "10px 0",
-                        fontSize: "0.56rem",
+                        fontSize: "0.64rem",
                         color: "rgba(200,214,229,0.34)",
                       }}
                     >
@@ -588,8 +594,6 @@ export default function TacticalInsightPanel({
                 display: "grid",
                 gap: 8,
                 marginTop: 10,
-                paddingTop: 10,
-                borderTop: "1px solid rgba(0,229,255,0.08)",
                 flexShrink: 0,
               }}
             >
@@ -606,6 +610,7 @@ export default function TacticalInsightPanel({
                   boxShadow: "0 0 14px rgba(0,229,255,0.12)",
                   fontFamily: "'DM Mono', monospace",
                   fontSize: "0.56rem",
+                  fontSize: "0.64rem",
                   letterSpacing: "0.18em",
                   textTransform: "uppercase",
                   cursor: "pointer",
@@ -625,12 +630,13 @@ export default function TacticalInsightPanel({
                   color: "rgba(255,120,120,0.72)",
                   fontFamily: "'DM Mono', monospace",
                   fontSize: "0.54rem",
+                  fontSize: "0.62rem",
                   letterSpacing: "0.16em",
                   textTransform: "uppercase",
                   cursor: "pointer",
                 }}
               >
-                Release Target
+                Unselect 
               </button>
             </div>
           </>
@@ -650,6 +656,7 @@ export default function TacticalInsightPanel({
               <div
                 style={{
                   fontSize: "0.66rem",
+                  fontSize: "0.76rem",
                   color: "rgba(255,255,255,0.82)",
                   letterSpacing: "0.06em",
                 }}
@@ -659,7 +666,7 @@ export default function TacticalInsightPanel({
               <div
                 style={{
                   marginTop: 7,
-                  fontSize: "0.54rem",
+                  fontSize: "0.62rem",
                   lineHeight: 1.55,
                   letterSpacing: "0.04em",
                   color: "rgba(200,214,229,0.36)",
