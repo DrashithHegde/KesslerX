@@ -14,7 +14,7 @@ Unlike traditional tracking tools, KesslerX goes beyond known objects to model *
 
 ---
 
-## ⚠️ Problem Statement
+##  Problem Statement
 
 Earth’s orbit is increasingly congested with active satellites and debris, leading to a growing risk of collisions.
 
@@ -40,7 +40,6 @@ KesslerX is a **decision-support and simulation system** that:
 * Tracks satellites in real time
 * Detects close approaches and risk events
 * Models uncertain and potentially dangerous regions
-* Simulates collision scenarios and cascade effects
 * Generates explainable insights using AI
 
 ---
@@ -55,7 +54,7 @@ KesslerX is a **decision-support and simulation system** that:
 
 ---
 
-### ⚙️ Physics-Based Orbital Engine
+###  Physics-Based Orbital Engine
 
 * Uses TLE (Two-Line Element) data
 * Propagates motion using SGP4
