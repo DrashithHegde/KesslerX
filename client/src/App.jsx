@@ -147,6 +147,11 @@ function timelineEventKey(event) {
   return `${targetId}:${candidateId}:${eventClass}:${timelineMinute}`;
 }
 
+function alertInteractionKey(alert) {
+  if (!alert) return null;
+  return `${alert.target_norad_id}-${alert.candidate_norad_id}`;
+}
+
 function mergeTimelineEvents(events = []) {
   const merged = new Map();
 
@@ -167,6 +172,74 @@ function mergeTimelineEvents(events = []) {
   }
 
   return [...merged.values()].sort((left, right) => left.timeline_minute - right.timeline_minute);
+}
+
+function mergeThreatDetails(baseThreat, enrichedThreat) {
+  if (!baseThreat && !enrichedThreat) return null;
+  if (!baseThreat) return enrichedThreat;
+  if (!enrichedThreat) return baseThreat;
+
+  return {
+    ...baseThreat,
+    zoneCrossingDetected:
+      enrichedThreat.zoneCrossingDetected ?? baseThreat.zoneCrossingDetected ?? false,
+    zoneCrossingCells:
+      enrichedThreat.zoneCrossingCells ?? baseThreat.zoneCrossingCells ?? 0,
+    zoneRiskPenalty:
+      enrichedThreat.zoneRiskPenalty ?? baseThreat.zoneRiskPenalty ?? 0,
+    eventClass: baseThreat.eventClass ?? enrichedThreat.eventClass ?? null,
+    eventLabel: baseThreat.eventLabel ?? enrichedThreat.eventLabel ?? null,
+    eventTimeMinutes: baseThreat.eventTimeMinutes ?? enrichedThreat.eventTimeMinutes ?? null,
+    isConfirmedCollision:
+      baseThreat.isConfirmedCollision ?? enrichedThreat.isConfirmedCollision ?? false,
+  };
+}
+
+function mergeNearbyThreats(baseThreats = [], enrichedThreats = []) {
+  if (!Array.isArray(baseThreats) || baseThreats.length === 0) {
+    return Array.isArray(enrichedThreats) ? enrichedThreats : [];
+  }
+  const enrichedByNoradId = new Map(
+    (Array.isArray(enrichedThreats) ? enrichedThreats : [])
+      .filter((item) => item?.noradId !== undefined && item?.noradId !== null)
+      .map((item) => [String(item.noradId), item])
+  );
+
+  return baseThreats.map((item) =>
+    mergeThreatDetails(item, enrichedByNoradId.get(String(item?.noradId ?? "")))
+  );
+}
+
+function mergeAnalysisEnrichment(baseAnalysis, enrichedAnalysis) {
+  if (!baseAnalysis && !enrichedAnalysis) return null;
+  if (!baseAnalysis) return enrichedAnalysis;
+  if (!enrichedAnalysis) return baseAnalysis;
+
+  return {
+    ...baseAnalysis,
+    shellPopulation: enrichedAnalysis.shellPopulation ?? baseAnalysis.shellPopulation,
+    shellDebrisCount: enrichedAnalysis.shellDebrisCount ?? baseAnalysis.shellDebrisCount,
+    shellDebrisRatio: enrichedAnalysis.shellDebrisRatio ?? baseAnalysis.shellDebrisRatio,
+    densityBand: enrichedAnalysis.densityBand ?? baseAnalysis.densityBand,
+    uncertaintyScore: enrichedAnalysis.uncertaintyScore ?? baseAnalysis.uncertaintyScore,
+    uncertaintyComponents: enrichedAnalysis.uncertaintyComponents ?? baseAnalysis.uncertaintyComponents,
+    uncertaintySource: enrichedAnalysis.uncertaintySource ?? baseAnalysis.uncertaintySource,
+    mitigations: Array.isArray(enrichedAnalysis.mitigations)
+      ? enrichedAnalysis.mitigations
+      : baseAnalysis.mitigations,
+    closestApproach: mergeThreatDetails(baseAnalysis.closestApproach, enrichedAnalysis.closestApproach),
+    nearbyObjects: mergeNearbyThreats(baseAnalysis.nearbyObjects, enrichedAnalysis.nearbyObjects),
+  };
+}
+
+function currentSimAbsoluteOffsetMinutes(simBaseTimeMs, simTimeRef) {
+  const baseTimeMs = Number(simBaseTimeMs);
+  const currentTimeMs = Number(simTimeRef?.current);
+  if (!Number.isFinite(baseTimeMs) || !Number.isFinite(currentTimeMs)) {
+    return 0;
+  }
+
+  return (currentTimeMs - baseTimeMs) / (60 * 1000);
 }
 
 export default function App() {
@@ -196,6 +269,7 @@ export default function App() {
   const [analysisOverview, setAnalysisOverview] = useState(EMPTY_ANALYSIS_OVERVIEW);
   const [selectionClearSignal, setSelectionClearSignal] = useState(0);
   const [focusNoradId, setFocusNoradId] = useState(null);
+  const [focusRequestToken, setFocusRequestToken] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [simOffsetHours, setSimOffsetHours] = useState(0);
@@ -208,6 +282,12 @@ export default function App() {
   const pendingTargetNoradIdRef = useRef(null);
   const analysisApiCooldownUntilRef = useRef(0);
   const analysisApiToastShownRef = useRef(false);
+  const previewAlertKeyRef = useRef(null);
+  const activeAlertKeyRef = useRef(null);
+  const backendAnalysisRef = useRef({
+    noradId: null,
+    data: null,
+  });
   const selectionTimelineBaseMinutesRef = useRef(0);
   const simProgressRef = useRef(0);
   const simBaseTimeRef = useRef(Date.now());
@@ -329,6 +409,8 @@ export default function App() {
           setActiveScenario(null);
           setActiveAlert(null);
           setPreviewAlert(null);
+          activeAlertKeyRef.current = null;
+          previewAlertKeyRef.current = null;
           setComparedNoradId(null);
           setSelectionTimelineSeeds([]);
           setFocusNoradId(null);
@@ -359,6 +441,8 @@ export default function App() {
         const result = await res.json().catch(() => ({}));
         setActiveAlert(null);
         setPreviewAlert(null);
+        activeAlertKeyRef.current = null;
+        previewAlertKeyRef.current = null;
         setActiveScenario({
           kind: "collision",
           title: "Injected Risk Field",
@@ -435,6 +519,8 @@ export default function App() {
         setActiveScenario(null);
         setActiveAlert(null);
         setPreviewAlert(null);
+        activeAlertKeyRef.current = null;
+        previewAlertKeyRef.current = null;
         setSelectionTimelineSeeds([]);
         setComparedNoradId(null);
         setRefreshSignal(s => s + 1);
@@ -464,13 +550,23 @@ export default function App() {
 
   const handleTargetChange = useCallback((snapshot) => {
     if (!snapshot) {
+      if (pendingTargetNoradIdRef.current !== null && pendingTargetNoradIdRef.current !== undefined) {
+        return;
+      }
       pendingTargetNoradIdRef.current = null;
+      backendAnalysisRef.current = {
+        noradId: null,
+        data: null,
+      };
       selectionTimelineBaseMinutesRef.current = 0;
       setSelectedTarget(null);
       setAnalysisSnapshot(null);
       setAnalysisOpen(false);
       setFocusMode(false);
       setPreviewAlert(null);
+      setActiveAlert(null);
+      previewAlertKeyRef.current = null;
+      activeAlertKeyRef.current = null;
       setSelectionTimelineSeeds([]);
       previousTargetIdRef.current = null;
       return;
@@ -505,16 +601,25 @@ export default function App() {
     }
 
     if (isNewTarget) {
-      const absoluteOffsetMinutes = simOffsetHours * 60;
-      selectionTimelineBaseMinutesRef.current = absoluteOffsetMinutes;
-      setSelectionTimelineSeeds(
-        mergeTimelineEvents(
-          (analysisOverview.alerts || [])
-            .filter((alert) => String(alert?.target_norad_id ?? "") === String(nextTargetId))
-            .map((alert) => normalizeTimelineEvent(alert, {}, { absoluteOffsetMinutes }))
-            .filter(Boolean)
-        )
+      const absoluteOffsetMinutes = currentSimAbsoluteOffsetMinutes(
+        simBaseTimeRef.current,
+        simTimeRef
       );
+      selectionTimelineBaseMinutesRef.current = absoluteOffsetMinutes;
+      const alertSeedForTarget =
+        activeAlert && String(activeAlert.target_norad_id) === String(nextTargetId)
+          ? activeAlert
+          : previewAlert && String(previewAlert.target_norad_id) === String(nextTargetId)
+            ? previewAlert
+            : null;
+      if (alertSeedForTarget) {
+        const seededEvent = normalizeTimelineEvent(alertSeedForTarget, {}, {
+          absoluteOffsetMinutes,
+        });
+        setSelectionTimelineSeeds(seededEvent ? [seededEvent] : []);
+      } else {
+        setSelectionTimelineSeeds([]);
+      }
     }
 
     if (nextTargetId && previousTargetIdRef.current !== nextTargetId) {
@@ -524,14 +629,22 @@ export default function App() {
     previousTargetIdRef.current = nextTargetId;
     if (activeAlert && nextTargetId && nextTargetId !== activeAlert.target_norad_id) {
       setActiveAlert(null);
+      activeAlertKeyRef.current = null;
       setComparedNoradId(null);
     }
     if (previewAlert && nextTargetId && nextTargetId !== previewAlert.target_norad_id) {
       setPreviewAlert(null);
+      previewAlertKeyRef.current = null;
     }
     setSelectedTarget(nextTarget);
-    setAnalysisSnapshot(snapshot.analysis ?? null);
-  }, [activeAlert, analysisOverview.alerts, previewAlert, showToast, simOffsetHours]);
+    const backendEnrichment =
+      nextTargetId !== null &&
+      nextTargetId !== undefined &&
+      String(backendAnalysisRef.current.noradId ?? "") === String(nextTargetId)
+        ? backendAnalysisRef.current.data
+        : null;
+    setAnalysisSnapshot(mergeAnalysisEnrichment(snapshot.analysis ?? null, backendEnrichment));
+  }, [activeAlert, previewAlert, showToast]);
 
   const handleOpenAnalysis = useCallback(() => {
     if (!selectedTarget || !analysisSnapshot) return;
@@ -552,6 +665,8 @@ export default function App() {
     setComparedNoradId(null);
     setActiveAlert(null);
     setPreviewAlert(null);
+    activeAlertKeyRef.current = null;
+    previewAlertKeyRef.current = null;
     setActiveScenario(null);
     setSelectionTimelineSeeds([]);
     setFocusMode(false);
@@ -565,21 +680,80 @@ export default function App() {
   }, []);
 
   const handleCompareObject = useCallback((noradId) => {
-    const nearbyObject = analysisSnapshot?.nearbyObjects?.find((item) => item.noradId === noradId);
+    const nearbyObject = analysisSnapshot?.nearbyObjects?.find(
+      (item) => String(item.noradId) === String(noradId)
+    );
     setActiveAlert(null);
     setPreviewAlert(null);
-    setComparedNoradId((current) => {
-      const nextValue = current === noradId ? null : noradId;
-      if (nearbyObject) {
-        showToast(
-          nextValue
-            ? `COMPARE LOCK // ${nearbyObject.objectName}`
-            : `COMPARE CLEAR // ${nearbyObject.objectName}`
-        );
-      }
-      return nextValue;
-    });
+    activeAlertKeyRef.current = null;
+    previewAlertKeyRef.current = null;
+    const nextNoradId = noradId === undefined || noradId === null ? null : String(noradId);
+    setComparedNoradId(nextNoradId);
+    if (nearbyObject) {
+      showToast(`THREAT PAIR // ${nearbyObject.objectName}`);
+    }
   }, [analysisSnapshot, showToast]);
+
+  useEffect(() => {
+    previewAlertKeyRef.current = alertInteractionKey(previewAlert);
+  }, [previewAlert]);
+
+  useEffect(() => {
+    activeAlertKeyRef.current = alertInteractionKey(activeAlert);
+  }, [activeAlert]);
+
+  const handleSelectAlert = useCallback((alert) => {
+    const nextAlertKey = alertInteractionKey(alert);
+    const previewKey = previewAlertKeyRef.current;
+    const activeKey = activeAlertKeyRef.current;
+    const shouldActivateScenario = previewKey === nextAlertKey || activeKey === nextAlertKey;
+
+    setSatTypes((prev) => {
+      const next = { ...prev };
+      const targetType = alert?.target_type;
+      const candidateType = alert?.candidate_type;
+      if (targetType && Object.prototype.hasOwnProperty.call(next, targetType)) {
+        next[targetType] = true;
+      }
+      if (candidateType && Object.prototype.hasOwnProperty.call(next, candidateType)) {
+        next[candidateType] = true;
+      }
+      return next;
+    });
+
+    const absoluteOffsetMinutes = currentSimAbsoluteOffsetMinutes(
+      simBaseTimeRef.current,
+      simTimeRef
+    );
+    selectionTimelineBaseMinutesRef.current = absoluteOffsetMinutes;
+    const alertTimelineEvent = normalizeTimelineEvent(alert, {}, { absoluteOffsetMinutes });
+    if (alertTimelineEvent) {
+      setSelectionTimelineSeeds([alertTimelineEvent]);
+    }
+
+    pendingTargetNoradIdRef.current =
+      String(selectedTarget?.details?.NORAD_CAT_ID ?? "") === String(alert.target_norad_id)
+        ? null
+        : alert.target_norad_id;
+    setFocusNoradId(alert.target_norad_id);
+    setFocusRequestToken((current) => current + 1);
+
+    setPreviewAlert(alert);
+    previewAlertKeyRef.current = nextAlertKey;
+
+    if (shouldActivateScenario) {
+      setActiveAlert(alert);
+      activeAlertKeyRef.current = nextAlertKey;
+      setComparedNoradId(alert.candidate_norad_id);
+      showToast(`ALERT SCENARIO // ${alert.target_name} VS ${alert.candidate_name}`);
+      return;
+    }
+
+    setActiveAlert(null);
+    activeAlertKeyRef.current = null;
+    setComparedNoradId(null);
+    showToast(`ALERT TARGET // ${alert.target_name}`);
+  }, [selectedTarget, showToast, simOffsetHours]);
 
   useEffect(() => {
     const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
@@ -639,20 +813,11 @@ export default function App() {
         if (!data || controller.signal.aborted) return;
         analysisApiCooldownUntilRef.current = 0;
         analysisApiToastShownRef.current = false;
-        setAnalysisSnapshot((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            shellPopulation: data.shellPopulation ?? prev.shellPopulation,
-            shellDebrisCount: data.shellDebrisCount ?? prev.shellDebrisCount,
-            shellDebrisRatio: data.shellDebrisRatio ?? prev.shellDebrisRatio,
-            densityBand: data.densityBand ?? prev.densityBand,
-            uncertaintyScore: data.uncertaintyScore ?? prev.uncertaintyScore,
-            uncertaintyComponents: data.uncertaintyComponents ?? prev.uncertaintyComponents,
-            uncertaintySource: data.uncertaintySource ?? prev.uncertaintySource,
-            mitigations: Array.isArray(data.mitigations) ? data.mitigations : prev.mitigations,
-          };
-        });
+        backendAnalysisRef.current = {
+          noradId: selectedTarget.details.NORAD_CAT_ID,
+          data,
+        };
+        setAnalysisSnapshot((prev) => mergeAnalysisEnrichment(prev, data));
       } catch {
         if (!controller.signal.aborted) {
           analysisApiCooldownUntilRef.current = Date.now() + ANALYSIS_API_RETRY_MS;
@@ -682,13 +847,13 @@ export default function App() {
       if (!current) return null;
       if (
         activeAlert &&
-        activeAlert.target_norad_id === selectedTarget.details.NORAD_CAT_ID &&
-        activeAlert.candidate_norad_id === current
+        String(activeAlert.target_norad_id) === String(selectedTarget.details.NORAD_CAT_ID) &&
+        String(activeAlert.candidate_norad_id) === String(current)
       ) {
         return current;
       }
       const stillVisible = analysisSnapshot.nearbyObjects?.some(
-        (item) => item.noradId === current
+        (item) => String(item.noradId) === String(current)
       );
       return stillVisible ? current : null;
     });
@@ -727,7 +892,7 @@ export default function App() {
     }
 
     const comparedObject = analysisSnapshot.nearbyObjects?.find(
-      (item) => item.noradId === comparedNoradId
+      (item) => String(item.noradId) === String(comparedNoradId)
     );
     if (!comparedObject) return null;
 
@@ -746,6 +911,10 @@ export default function App() {
       risk_color: comparedObject.pairRiskColor,
       event_class: comparedObject.eventClass,
       event_label: comparedObject.eventLabel,
+      event_time_minutes: comparedObject.eventTimeMinutes,
+      zone_crossing_detected: comparedObject.zoneCrossingDetected,
+      zone_crossing_cells: comparedObject.zoneCrossingCells,
+      zone_risk_penalty: comparedObject.zoneRiskPenalty,
       is_confirmed_collision: comparedObject.isConfirmedCollision,
     };
   }, [activeAlert, analysisSnapshot, comparedNoradId, selectedTarget]);
@@ -933,6 +1102,7 @@ export default function App() {
         onDatasetStatsChange={handleDatasetStatsChange}
         selectionClearSignal={selectionClearSignal}
         focusNoradId={focusNoradId}
+        focusRequestToken={focusRequestToken}
         refreshSignal={refreshSignal}
         simOffsetHours={simOffsetHours}
         simProgressRef={simProgressRef}
@@ -984,60 +1154,7 @@ export default function App() {
             ? `${previewAlert.target_norad_id}-${previewAlert.candidate_norad_id}`
             : null
         }
-        onSelectAlert={(alert) => {
-          const alertKey = `${alert.target_norad_id}-${alert.candidate_norad_id}`;
-          const previewKey = previewAlert
-            ? `${previewAlert.target_norad_id}-${previewAlert.candidate_norad_id}`
-            : null;
-          const activeKey = activeAlert
-            ? `${activeAlert.target_norad_id}-${activeAlert.candidate_norad_id}`
-            : null;
-
-          setSatTypes((prev) => {
-            const next = { ...prev };
-            const targetType = alert?.target_type;
-            const candidateType = alert?.candidate_type;
-            if (targetType && Object.prototype.hasOwnProperty.call(next, targetType)) {
-              next[targetType] = true;
-            }
-            if (candidateType && Object.prototype.hasOwnProperty.call(next, candidateType)) {
-              next[candidateType] = true;
-            }
-            return next;
-          });
-
-          const absoluteOffsetMinutes = simOffsetHours * 60;
-          selectionTimelineBaseMinutesRef.current = absoluteOffsetMinutes;
-          const alertTimelineEvent = normalizeTimelineEvent(alert, {}, { absoluteOffsetMinutes });
-          if (alertTimelineEvent) {
-            setSelectionTimelineSeeds((current) =>
-              mergeTimelineEvents([...current, alertTimelineEvent])
-            );
-          }
-
-          pendingTargetNoradIdRef.current =
-            String(selectedTarget?.details?.NORAD_CAT_ID ?? "") === String(alert.target_norad_id)
-              ? null
-              : alert.target_norad_id;
-          setFocusNoradId(alert.target_norad_id);
-
-          if (previewKey === alertKey && activeKey !== alertKey) {
-            setPreviewAlert(alert);
-            setActiveAlert(alert);
-            setComparedNoradId(alert.candidate_norad_id);
-            showToast(`ALERT SCENARIO // ${alert.target_name} VS ${alert.candidate_name}`);
-            return;
-          }
-
-          setPreviewAlert(alert);
-          setActiveAlert(activeKey === alertKey ? alert : null);
-          setComparedNoradId(activeKey === alertKey ? alert.candidate_norad_id : null);
-          showToast(
-            activeKey === alertKey
-              ? `ALERT SCENARIO // ${alert.target_name} VS ${alert.candidate_name}`
-              : `ALERT TARGET // ${alert.target_name}`
-          );
-        }}
+        onSelectAlert={handleSelectAlert}
       />
 
       <TacticalInsightPanel
@@ -1076,8 +1193,6 @@ export default function App() {
         onSimTriggerCollision={handleSimTriggerCollision}
         onStartCollisionSimulation={handleStartCollisionSimulation}
         onSimReset={handleSimReset}
-        onOpenAnalysis={handleOpenAnalysis}
-        analysisAvailable={Boolean(selectedTarget && analysisSnapshot)}
         simActionPending={simActionPending}
         simProgressRef={simProgressRef}
         onSimProgressChange={handleSimProgressChange}
@@ -1101,10 +1216,10 @@ export default function App() {
           minWidth: 156,
           padding: "10px 14px",
           borderRadius: 10,
-          border: "1px solid rgba(255,120,120,0.34)",
-          background: "linear-gradient(180deg, rgba(20,13,13,0.82), rgba(12,8,8,0.84))",
-          color: "rgba(255,146,146,0.92)",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.36)",
+          border: "1px solid rgba(255,118,118,0.5)",
+          background: "linear-gradient(180deg, rgba(255,98,98,0.12), rgba(255,98,98,0.04))",
+          color: "rgba(255,170,170,0.98)",
+          boxShadow: "0 0 16px rgba(255,98,98,0.1), 0 8px 24px rgba(0,0,0,0.32)",
           fontFamily: "'DM Mono', monospace",
           fontSize: "0.58rem",
           letterSpacing: "0.18em",

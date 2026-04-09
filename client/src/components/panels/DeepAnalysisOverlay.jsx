@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { formatUtc, getObjectTypeColor } from "../../utils/orbitalAnalysis";
+import { formatTPlusMinutes, formatUtc, getObjectTypeColor } from "../../utils/orbitalAnalysis";
 
 function MetricCard({ label, value, accent = "var(--cyan)", tier = "secondary" }) {
   const isPrimary = tier === "primary";
@@ -17,7 +17,6 @@ function MetricCard({ label, value, accent = "var(--cyan)", tier = "secondary" }
     >
       <div
         style={{
-          fontSize: isPrimary ? "0.5rem" : "0.52rem",
           fontSize: isPrimary ? "0.58rem" : "0.6rem",
           color: "var(--text-dim)",
           letterSpacing: isPrimary ? "0.13em" : "0.12em",
@@ -46,7 +45,6 @@ function SectionLabel({ children }) {
   return (
     <div
       style={{
-        fontSize: "0.58rem",
         fontSize: "0.66rem",
         letterSpacing: "0.2em",
         color: "var(--text-dim)",
@@ -86,7 +84,6 @@ function SnapshotMetric({ label, value, accent = "rgba(255,255,255,0.9)" }) {
     >
       <div
         style={{
-          fontSize: "0.52rem",
           fontSize: "0.6rem",
           color: "var(--text-dim)",
           letterSpacing: "0.11em",
@@ -223,8 +220,9 @@ function DeepAnalysisOverlay({
         eventClass: activePair.event_class,
         eventLabel: activePair.event_label,
         isConfirmedCollision: activePair.is_confirmed_collision,
-        zoneCrossingDetected: false,
-        zoneCrossingCells: 0,
+        zoneCrossingDetected: activePair.zone_crossing_detected ?? false,
+        zoneCrossingCells: activePair.zone_crossing_cells ?? 0,
+        zoneRiskPenalty: activePair.zone_risk_penalty ?? 0,
       }
       : analysis.closestApproach;
 
@@ -249,6 +247,9 @@ function DeepAnalysisOverlay({
           event_class: effectiveClosestApproach?.eventClass ?? null,
           event_label: effectiveClosestApproach?.eventLabel ?? null,
           is_confirmed_collision: effectiveClosestApproach?.isConfirmedCollision ?? false,
+          zone_crossing_detected: effectiveClosestApproach?.zoneCrossingDetected ?? null,
+          zone_crossing_cells: effectiveClosestApproach?.zoneCrossingCells ?? null,
+          zone_risk_penalty: effectiveClosestApproach?.zoneRiskPenalty ?? null,
         };
         const res = await fetch(`${apiBaseUrl}/analysis/explain`, {
           method: "POST",
@@ -258,9 +259,7 @@ function DeepAnalysisOverlay({
         const data = await res.json();
         if (isMounted) {
           const resolved = (data.explanation || data.detail || "").trim();
-          console.log("[KesslerX RAG] Response:", { status: res.status, explanation: resolved?.substring(0, 200), full: data });
           if (!resolved || isLlmOfflineMessage(resolved)) {
-            console.warn("[KesslerX RAG] Explanation filtered out:", resolved);
             setRagExplanation(null);
           } else {
             setRagExplanation(resolved);
@@ -302,8 +301,9 @@ function DeepAnalysisOverlay({
       eventClass: activePair.event_class,
       eventLabel: activePair.event_label,
       isConfirmedCollision: activePair.is_confirmed_collision,
-      zoneCrossingDetected: false,
-      zoneCrossingCells: 0,
+      zoneCrossingDetected: activePair.zone_crossing_detected ?? false,
+      zoneCrossingCells: activePair.zone_crossing_cells ?? 0,
+      zoneRiskPenalty: activePair.zone_risk_penalty ?? 0,
     }
     : analysis.closestApproach;
   const currentState = analysis.currentState;
@@ -349,7 +349,6 @@ function DeepAnalysisOverlay({
           <div>
             <div
               style={{
-                fontSize: "0.62rem",
                 fontSize: "0.7rem",
                 letterSpacing: "0.2em",
                 color: "rgba(0,229,255,0.55)",
@@ -362,7 +361,6 @@ function DeepAnalysisOverlay({
             <div
               style={{
                 fontFamily: "'Syne', sans-serif",
-                fontSize: "1.35rem",
                 fontSize: "1.5rem",
                 fontWeight: 700,
                 color: "rgba(255,255,255,0.94)",
@@ -375,7 +373,6 @@ function DeepAnalysisOverlay({
             <div
               style={{
                 marginTop: 7,
-                fontSize: "0.64rem",
                 fontSize: "0.72rem",
                 color: "var(--text-dim)",
                 letterSpacing: "0.11em",
@@ -395,7 +392,6 @@ function DeepAnalysisOverlay({
               color: "rgba(0,229,255,0.88)",
               borderRadius: 8,
               padding: "9px 14px",
-              fontSize: "0.62rem",
               fontSize: "0.7rem",
               letterSpacing: "0.14em",
               textTransform: "uppercase",
@@ -423,7 +419,7 @@ function DeepAnalysisOverlay({
             />
             <MetricCard
               label="Time to Closest Approach"
-              value={closestApproach ? `T+${closestApproach.sampledTcaMinutes} min` : "No close pass"}
+              value={closestApproach ? formatTPlusMinutes(closestApproach.sampledTcaMinutes) : "No close pass"}
               accent="rgba(255,209,102,0.95)"
               tier="primary"
             />
@@ -464,7 +460,6 @@ function DeepAnalysisOverlay({
             <SectionLabel>AI Operational Brief</SectionLabel>
             <div
               style={{
-                fontSize: "0.66rem",
                 fontSize: "0.74rem",
                 color: "var(--text)",
                 lineHeight: 1.6,
@@ -486,7 +481,6 @@ function DeepAnalysisOverlay({
                 display: "grid",
                 gap: 8,
                 marginTop: 14,
-                fontSize: "0.6rem",
                 fontSize: "0.68rem",
                 color: "var(--text-dim)",
                 letterSpacing: "0.08em",
@@ -494,8 +488,6 @@ function DeepAnalysisOverlay({
             >
               <StatRow label="Sampled At" value={formatUtc(analysis.sampledAt)} />
               <StatRow label="Simulated Time" value={simTimestamp ? formatUtc(simTimestamp) : "--"} />
-              <StatRow label="Latitude" value={`${currentState.latitudeDeg} deg`} />
-              <StatRow label="Longitude" value={`${currentState.longitudeDeg} deg`} />
               <StatRow label="Launch Age" value={analysis.launchAgeYears ? `${analysis.launchAgeYears} yr` : "--"} />
               <StatRow label="Shell Debris Count" value={analysis.shellDebrisCount} />
               <StatRow
@@ -528,7 +520,7 @@ function DeepAnalysisOverlay({
                 />
                 <SnapshotMetric
                   label="Time to Closest Approach"
-                  value={`T+${closestApproach.sampledTcaMinutes} min`}
+                  value={formatTPlusMinutes(closestApproach.sampledTcaMinutes)}
                   accent="rgba(0,229,255,0.9)"
                 />
               </div>
@@ -557,7 +549,13 @@ function DeepAnalysisOverlay({
                 />
                 <SnapshotMetric
                   label="Zone Crossing"
-                  value={closestApproach.zoneCrossingDetected ? `Yes (${closestApproach.zoneCrossingCells ?? 0} cells)` : "No"}
+                  value={
+                    closestApproach.zoneCrossingDetected
+                      ? `Yes (${closestApproach.zoneCrossingCells ?? 0} ${
+                        Number(closestApproach.zoneCrossingCells ?? 0) === 1 ? "cell" : "cells"
+                      })`
+                      : "No"
+                  }
                   accent={closestApproach.zoneCrossingDetected ? "rgba(255,140,66,0.95)" : "rgba(173,255,214,0.92)"}
                 />
               </div>
@@ -585,7 +583,6 @@ function DeepAnalysisOverlay({
                 >
                   <div
                     style={{
-                      fontSize: "0.48rem",
                       fontSize: "0.56rem",
                       color: "rgba(255,209,102,0.9)",
                       letterSpacing: "0.16em",
@@ -597,7 +594,6 @@ function DeepAnalysisOverlay({
                   </div>
                   <div
                     style={{
-                      fontSize: "0.62rem",
                       fontSize: "0.7rem",
                       color: "var(--text)",
                       lineHeight: 1.48,

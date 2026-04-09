@@ -145,7 +145,7 @@ export default function IntroOverlay({ phase }) {
           textTransform: "uppercase",
         }}
       >
-        TRACKED LEO OBJECTS | DENSITY MODEL | SCREEN WINDOW: 90 MIN
+        TRACKED LEO OBJECTS | DENSITY MODEL | SCREEN WINDOW: 6 HRS
       </div>
 
       <div

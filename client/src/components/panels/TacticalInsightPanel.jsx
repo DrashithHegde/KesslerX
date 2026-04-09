@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { getObjectTypeColor } from "../../utils/orbitalAnalysis";
+import { formatTPlusMinutes, getObjectTypeColor } from "../../utils/orbitalAnalysis";
 
 function riskBandColor(riskBand) {
   if (riskBand === "SEVERE") return "#ff5f57";
@@ -41,7 +41,6 @@ function SectionLabel({ children, status, statusColor = "rgba(0,229,255,0.6)" })
     >
       <span
         style={{
-          fontSize: "0.54rem",
           fontSize: "0.62rem",
           letterSpacing: "0.2em",
           color: "var(--text-dim)",
@@ -53,7 +52,6 @@ function SectionLabel({ children, status, statusColor = "rgba(0,229,255,0.6)" })
       {status ? (
         <span
           style={{
-            fontSize: "0.48rem",
             fontSize: "0.56rem",
             letterSpacing: "0.16em",
             color: statusColor,
@@ -80,7 +78,6 @@ function StatGridCard({ label, value, accent = "rgba(255,255,255,0.86)" }) {
     >
       <div
         style={{
-          fontSize: "0.46rem",
           fontSize: "0.54rem",
           letterSpacing: "0.16em",
           color: "rgba(200,214,229,0.34)",
@@ -118,6 +115,7 @@ function DetailRow({ label, value, accent }) {
     >
       <span
         style={{
+          minWidth: 0,
           color: "rgba(200,214,229,0.34)",
           textTransform: "uppercase",
         }}
@@ -126,8 +124,10 @@ function DetailRow({ label, value, accent }) {
       </span>
       <span
         style={{
+          minWidth: 0,
           color: accent || "rgba(255,255,255,0.82)",
           textAlign: "right",
+          wordBreak: "break-word",
         }}
       >
         {value}
@@ -140,7 +140,10 @@ function NearbyObjectRow({ item, active, onClick, rank = 1 }) {
   return (
     <button
       type="button"
-      onClick={() => onClick?.(item.noradId)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick?.(item.noradId);
+      }}
       style={{
         width: "100%",
         textAlign: "left",
@@ -160,7 +163,6 @@ function NearbyObjectRow({ item, active, onClick, rank = 1 }) {
       <div style={{ minWidth: 0 }}>
         <div
           style={{
-            fontSize: "0.56rem",
             fontSize: "0.64rem",
             letterSpacing: "0.05em",
             color: active ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.8)",
@@ -195,7 +197,6 @@ function NearbyObjectRow({ item, active, onClick, rank = 1 }) {
       >
         <div
           style={{
-            fontSize: "0.56rem",
             fontSize: "0.64rem",
             color: active ? "rgba(255,209,102,0.92)" : "rgba(0,229,255,0.82)",
           }}
@@ -212,7 +213,7 @@ function NearbyObjectRow({ item, active, onClick, rank = 1 }) {
           }}
         >
           {item.sampledTcaMinutes !== undefined && item.sampledTcaMinutes !== null
-            ? `T+${item.sampledTcaMinutes}m | dAlt ${item.altitudeDeltaKm} km`
+            ? `${formatTPlusMinutes(item.sampledTcaMinutes, true)} | dAlt ${item.altitudeDeltaKm} km`
             : `dAlt ${item.altitudeDeltaKm} km`}
         </div>
       </div>
@@ -384,6 +385,7 @@ export default function TacticalInsightPanel({
         right: 20,
         zIndex: 28,
         width: 298,
+        minWidth: 0,
         display: "flex",
         flexDirection: "column",
         animationDelay: "0.08s",
@@ -396,6 +398,7 @@ export default function TacticalInsightPanel({
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
+          minWidth: 0,
           padding: "11px",
           overflow: "hidden",
           border: "1px solid rgba(0,229,255,0.13)",
@@ -409,7 +412,9 @@ export default function TacticalInsightPanel({
               style={{
                 flex: 1,
                 minHeight: 0,
+                minWidth: 0,
                 overflowY: "auto",
+                overflowX: "hidden",
                 paddingRight: 2,
               }}
             >
@@ -428,7 +433,6 @@ export default function TacticalInsightPanel({
               >
                 <div
                   style={{
-                    fontSize: "0.5rem",
                     fontSize: "0.58rem",
                     letterSpacing: "0.16em",
                     color: "rgba(0,229,255,0.58)",
@@ -481,7 +485,7 @@ export default function TacticalInsightPanel({
                   />
                   <StatGridCard
                     label="Event Time"
-                    value={effectiveTca !== undefined && effectiveTca !== null ? `T+${effectiveTca} min` : "Clear"}
+                    value={effectiveTca !== undefined && effectiveTca !== null ? formatTPlusMinutes(effectiveTca) : "Clear"}
                     accent="rgba(255,209,102,0.9)"
                   />
                   <StatGridCard
@@ -501,7 +505,7 @@ export default function TacticalInsightPanel({
                 style={{ marginTop: 12 }}
               >
                 <SectionLabel
-                  status={comparedNoradId ? "COMPARE ACTIVE" : analysis.densityBand}
+                  status={comparedNoradId ? "THREAT PAIR ACTIVE" : analysis.densityBand}
                   statusColor={comparedNoradId ? "rgba(255,209,102,0.9)" : "rgba(0,229,255,0.7)"}
                 >
                   Top Threats
@@ -519,7 +523,7 @@ export default function TacticalInsightPanel({
                       <NearbyObjectRow
                         key={`${item.noradId}-${item.objectName}`}
                         item={item}
-                        active={comparedNoradId === item.noradId}
+                        active={String(comparedNoradId ?? "") === String(item.noradId)}
                         onClick={onCompareObject}
                         rank={index + 1}
                       />
@@ -609,7 +613,6 @@ export default function TacticalInsightPanel({
                   color: "rgba(0,229,255,0.9)",
                   boxShadow: "0 0 14px rgba(0,229,255,0.12)",
                   fontFamily: "'DM Mono', monospace",
-                  fontSize: "0.56rem",
                   fontSize: "0.64rem",
                   letterSpacing: "0.18em",
                   textTransform: "uppercase",
@@ -629,7 +632,6 @@ export default function TacticalInsightPanel({
                   background: "rgba(11,15,20,0.52)",
                   color: "rgba(255,120,120,0.72)",
                   fontFamily: "'DM Mono', monospace",
-                  fontSize: "0.54rem",
                   fontSize: "0.62rem",
                   letterSpacing: "0.16em",
                   textTransform: "uppercase",
@@ -655,7 +657,6 @@ export default function TacticalInsightPanel({
             >
               <div
                 style={{
-                  fontSize: "0.66rem",
                   fontSize: "0.76rem",
                   color: "rgba(255,255,255,0.82)",
                   letterSpacing: "0.06em",
@@ -694,7 +695,7 @@ export default function TacticalInsightPanel({
                     <DetailRow label="Pair Risk" value={`${activePair.risk_score}%`} accent={effectiveRiskColor} />
                     <DetailRow
                       label="Pair TCA"
-                      value={`T+${activePairTimelineEvent?.timeline_minute ?? activePair.sampled_tca_minutes} min`}
+                      value={formatTPlusMinutes(activePairTimelineEvent?.timeline_minute ?? activePair.sampled_tca_minutes)}
                     />
                   </div>
                 </div>

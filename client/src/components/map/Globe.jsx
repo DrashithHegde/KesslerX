@@ -4,6 +4,7 @@ import { OrbitControls, Sphere, Stars } from "@react-three/drei";
 import * as THREE from "three";
 import { twoline2satrec } from "satellite.js/dist/io.js";
 import OrbitPath from "./OrbitPath";
+import UncertaintyZones from "./UncertaintyZones";
 import {
   buildDatasetStats,
   buildTargetAnalysis,
@@ -381,81 +382,6 @@ function smoothstep(edge0, edge1, value) {
   return x * x * (3 - 2 * x);
 }
 
-function zoneColor(score) {
-  if (score >= 80) return "#ff4d5a";
-  if (score >= 60) return "#ff9f43";
-  if (score >= 40) return "#ffd166";
-  return "#3fa9f5";
-}
-
-function latLonToCartesian(radius, latDeg, lonDeg) {
-  const latRad = THREE.MathUtils.degToRad(latDeg);
-  const lonRad = THREE.MathUtils.degToRad(lonDeg);
-  return [
-    radius * Math.cos(latRad) * Math.cos(lonRad),
-    radius * Math.sin(latRad),
-    radius * Math.cos(latRad) * Math.sin(lonRad),
-  ];
-}
-
-function UncertaintyZoneMarker({ zone, index, displayScore }) {
-  const groupRef = useRef();
-  const shellRef = useRef();
-  const color = zoneColor(displayScore);
-  const altitudeKm = Math.min(zone.avg_altitude_km ?? 0, 1800);
-  const radius = EARTH_RADIUS + 0.024 + altitudeKm / 6371;
-  const [x, y, z] = useMemo(
-    () => latLonToCartesian(radius, zone.lat ?? 0, zone.lon ?? 0),
-    [radius, zone.lat, zone.lon]
-  );
-  const severity = THREE.MathUtils.clamp(displayScore / 100, 0, 1);
-  const cellSizeDeg = Number(zone.cell_size_deg ?? 12);
-  const debrisRatio = THREE.MathUtils.clamp(Number(zone.debris_ratio ?? 0) / 100, 0, 1);
-  const objectDensityBoost = Math.min((zone.total_objects ?? 0) / 260, 0.065);
-  const altitudeSpreadBoost = Math.min(Math.sqrt(Number(zone.altitude_variance ?? 0)) / 420, 0.03);
-  const angularRadius =
-    THREE.MathUtils.degToRad(cellSizeDeg) * (0.16 + severity * 0.06 + debrisRatio * 0.05);
-  const shellRadius =
-    radius * angularRadius + objectDensityBoost + altitudeSpreadBoost + severity * 0.008;
-
-  useFrame((state) => {
-    const t = state.clock.getElapsedTime();
-    const pulse = 1 + Math.sin(t * (1.1 + index * 0.05)) * (0.018 + severity * 0.012);
-
-    if (groupRef.current) {
-      groupRef.current.scale.setScalar(pulse);
-    }
-    if (shellRef.current) {
-      shellRef.current.rotation.y += 0.0011;
-      shellRef.current.rotation.x += 0.0005;
-      shellRef.current.material.opacity = 0.12 + severity * 0.12;
-      shellRef.current.material.emissiveIntensity = 0.22 + severity * 0.22;
-    }
-  });
-
-  return (
-    <group position={[x, y, z]}>
-      <group ref={groupRef}>
-        <mesh ref={shellRef} renderOrder={4}>
-          <sphereGeometry args={[shellRadius, 22, 22]} />
-          <meshStandardMaterial
-            color={color}
-            transparent
-            opacity={0.2}
-            emissive={color}
-            emissiveIntensity={0.3}
-            roughness={0.3}
-            metalness={0.05}
-            depthTest
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-      </group>
-    </group>
-  );
-}
-
 function ZoneLights() {
   return (
     <>
@@ -463,48 +389,6 @@ function ZoneLights() {
       <directionalLight position={[3.6, 2.4, 4.8]} intensity={0.5} color="#ffffff" />
       <directionalLight position={[-4, -2.4, -3.6]} intensity={0.2} color="#7dd3fc" />
     </>
-  );
-}
-
-function UncertaintyZones({ zones = [] }) {
-  const visibleZones = zones.slice(0, 12);
-  const displayZones = useMemo(() => {
-    if (!visibleZones.length) return [];
-
-    const scores = visibleZones.map((zone) => Number(zone.uncertainty_score ?? 0));
-    const minScore = Math.min(...scores);
-    const maxScore = Math.max(...scores);
-
-    return visibleZones.map((zone, index) => {
-      const rawScore = Number(zone.uncertainty_score ?? 0);
-      const normalized =
-        maxScore > minScore ? ((rawScore - minScore) / (maxScore - minScore)) * 100 : rawScore;
-      const boostedScore = Math.max(
-        rawScore >= 68 ? 84 : 0,
-        rawScore >= 64 ? 66 : 0,
-        rawScore >= 60 ? 46 : 0,
-        normalized
-      );
-
-      return {
-        zone,
-        index,
-        displayScore: THREE.MathUtils.clamp(boostedScore, 0, 100),
-      };
-    });
-  }, [visibleZones]);
-
-  return (
-    <group>
-      {displayZones.map(({ zone, index, displayScore }) => (
-        <UncertaintyZoneMarker
-          key={`${zone.lat}-${zone.lon}-${zone.avg_altitude_km ?? "na"}-${index}`}
-          zone={zone}
-          index={index}
-          displayScore={displayScore}
-        />
-      ))}
-    </group>
   );
 }
 
@@ -837,7 +721,7 @@ function PairLink({
   simProgressRef,
   simTimeRef,
   simBaseTimeMs,
-  color = "#ff7b5f",
+  color = "#00e5ff",
 }) {
   const lineRef = useRef();
   const glowLineRef = useRef();
@@ -849,6 +733,26 @@ function PairLink({
   const leftExactVectorRef = useMemo(() => new THREE.Vector3(), []);
   const rightTargetVectorRef = useMemo(() => new THREE.Vector3(), []);
   const rightExactVectorRef = useMemo(() => new THREE.Vector3(), []);
+  const leftNoradId = leftSat?.details?.NORAD_CAT_ID ?? null;
+  const rightNoradId = rightSat?.details?.NORAD_CAT_ID ?? null;
+
+  useEffect(() => {
+    leftMotionRef.current = {};
+    rightMotionRef.current = {};
+    leftRef.set(0, 0, 0);
+    rightRef.set(0, 0, 0);
+
+    const resetGeometry = (line) => {
+      const positions = line?.geometry?.attributes?.position?.array;
+      if (!positions) return;
+      positions.fill(0);
+      line.geometry.attributes.position.needsUpdate = true;
+      line.geometry.computeBoundingSphere();
+    };
+
+    resetGeometry(lineRef.current);
+    resetGeometry(glowLineRef.current);
+  }, [leftNoradId, rightNoradId, leftRef, rightRef]);
 
   useFrame((_, delta) => {
     if (!lineRef.current || !glowLineRef.current || !leftSat?.satrec || !rightSat?.satrec) return;
@@ -1220,6 +1124,7 @@ export default function Globe({
   onDatasetStatsChange,
   selectionClearSignal,
   focusNoradId,
+  focusRequestToken = 0,
   refreshSignal,
   simOffsetHours = 0,
   simProgressRef,
@@ -1433,6 +1338,17 @@ export default function Globe({
   const comparedOrbitColor = comparedSat
     ? getObjectTypeColor(comparedSat.type)
     : "#00e5ff";
+  const showSelectedOrbitPath = Boolean(
+    selectedSat &&
+    showOrbitalPaths &&
+    !selectedSat.details?.is_synthetic
+  );
+  const showComparedOrbitPath = Boolean(
+    pairModeActive &&
+    comparedSat &&
+    showOrbitalPaths &&
+    !comparedSat.details?.is_synthetic
+  );
 
   useEffect(() => {
     onDatasetStatsChange?.(datasetStats);
@@ -1592,7 +1508,7 @@ export default function Globe({
     if (match) {
       setSelectedSat(match);
     }
-  }, [allSatData, focusNoradId]);
+  }, [allSatData, focusNoradId, focusRequestToken]);
 
   useEffect(() => {
     if (selectedSat) {
@@ -1685,14 +1601,26 @@ export default function Globe({
           priorityNoradIds={priorityNoradIds}
         />
 
-        {selectedSat && showOrbitalPaths && !pairModeActive && !selectedSat.details?.is_synthetic && (
+        {showSelectedOrbitPath && (
           <OrbitPath
             satrec={selectedSat.satrec}
             color={orbitColor}
             pastColor={orbitColor}
             futureColor={orbitColor}
             opacity={0.6}
-            referenceTime={pairReferenceTime || simulatedDate}
+            referenceTime={simulatedDate}
+            simTimeRef={simTimeRef}
+          />
+        )}
+        {showComparedOrbitPath && (
+          <OrbitPath
+            satrec={comparedSat.satrec}
+            color={comparedOrbitColor}
+            pastColor={comparedOrbitColor}
+            futureColor={comparedOrbitColor}
+            opacity={0.52}
+            referenceTime={simulatedDate}
+            simTimeRef={simTimeRef}
           />
         )}
         {selectedSat && !collisionPlaybackActive && (
@@ -1725,6 +1653,7 @@ export default function Globe({
         ) : null}
         {pairModeActive && !collisionPlaybackActive ? (
           <PairLink
+            key={`pair-link-${selectedSat?.details?.NORAD_CAT_ID ?? "none"}-${comparedSat?.details?.NORAD_CAT_ID ?? "none"}`}
             leftSat={selectedSat}
             rightSat={comparedSat}
             simOffsetHours={simOffsetHours}

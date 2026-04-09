@@ -61,7 +61,7 @@ export default function ClassificationHeader({ onBoundsChange }) {
       }}
     >
       <div style={{ fontWeight: 700, marginBottom: 6 }}>
-        TOP SECRET // KESSLERX // NOFORN
+        ORBITAL RISK INTELLIGENCE // ACTIVE
       </div>
       <div style={{ fontSize: "0.55rem", opacity: 0.85 }}>
         SENTINEL-02 ORBITAL WATCH

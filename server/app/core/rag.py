@@ -17,13 +17,12 @@ Your job is to produce a concise, deterministic briefing using ONLY the inputs p
 
 Output format is mandatory and must always follow this exact template:
 
-Assessment: [briefly explain proximity and uncertainty context]
+Assessment: [briefly explain the encounter and its operational meaning]
 
 Contributing Factors:
-- Distance Factor: [close / moderate / far, based on min_separation_km]
-- Uncertainty Factor: [low / medium / high, based on uncertainty score]
-- Debris Context: [describe whether debris outlier context is present]
-- Anomaly Level: [describe anomaly score and how it influences confidence]
+- Event Severity: [state encounter severity using distance and TCA]
+- Zone Transit: [explicitly say whether the screened path crosses uncertainty-zone cells or not]
+- Environment: [briefly combine uncertainty, debris context, and anomaly state]
 
 Mitigation Strategy:
 - [action 1]
@@ -31,10 +30,12 @@ Mitigation Strategy:
 
 Rules:
 - Use the displayed uncertainty score exactly as provided; never invent a different score.
+- Explicitly mention uncertainty-zone crossing. If there is no crossing, say "no uncertainty-zone crossing detected in the screened path."
 - Treat "super_close_call" as a dangerous near-miss that deserves stronger urgency than a routine close approach.
 - Treat "collision" or confirmed collision as deterministic impact language, not probabilistic language.
-- Keep output to 4-8 lines total.
+- Keep output to 6-8 lines total.
 - Use plain, easy-to-understand language suitable for non-specialist operators.
+- Keep each line short, practical, and tactical.
 - If any factor input is missing, state "insufficient telemetry" for that factor.
 - If model service/config is unavailable, return exactly:
     "LLM Explanation Engine offline. Please check API configuration."
@@ -89,6 +90,9 @@ class RAGEngine:
             "objects_in_orbital_band": _num(analysis_context.get("objects_in_orbital_band"), 0),
             "density_score": _num(analysis_context.get("density_score"), 1),
             "anomaly_score": _num(analysis_context.get("anomaly_score"), 1),
+            "zone_crossing_detected": bool(analysis_context.get("zone_crossing_detected")) if analysis_context.get("zone_crossing_detected") is not None else None,
+            "zone_crossing_cells": _num(analysis_context.get("zone_crossing_cells"), 0),
+            "zone_risk_penalty": _num(analysis_context.get("zone_risk_penalty"), 1),
         }
 
         # Deterministic string without external dependencies.
@@ -145,6 +149,9 @@ class RAGEngine:
                 f"Debris Outlier Flag: {analysis_context.get('is_debris_outlier', 'insufficient telemetry')}\n"
                 f"Debris Density Score (0-100): {analysis_context.get('density_score', 'insufficient telemetry')}\n"
                 f"Anomaly Score (0-100): {analysis_context.get('anomaly_score', 'insufficient telemetry')}\n\n"
+                f"Zone Crossing Detected: {analysis_context.get('zone_crossing_detected', 'insufficient telemetry')}\n"
+                f"Zone Crossing Cells: {analysis_context.get('zone_crossing_cells', 'insufficient telemetry')}\n"
+                f"Zone Risk Penalty: {analysis_context.get('zone_risk_penalty', 'insufficient telemetry')}\n\n"
                 "Return only the required template."
             )
 
@@ -180,24 +187,15 @@ class RAGEngine:
                 offline_msg = "LLM Explanation Engine offline. Please check API configuration."
                 self._set_cached(cache_key, offline_msg, self.error_cache_ttl_seconds)
                 return offline_msg
-            error_msg = f"Error executing inference: {e}"
-            self._set_cached(cache_key, error_msg, self.error_cache_ttl_seconds)
-            return error_msg
+            fallback_msg = self._coerce_plain_operational_brief("", analysis_context)
+            self._set_cached(cache_key, fallback_msg, self.error_cache_ttl_seconds)
+            return fallback_msg
 
     def _coerce_plain_operational_brief(self, content: str, analysis_context: Dict[str, Any]) -> str:
         """
         Guarantees a readable, operator-friendly brief structure even if the LLM
         output is verbose or drifts from the required template.
         """
-        required_markers = [
-            "Assessment:",
-            "Contributing Factors:",
-            "Mitigation Strategy:",
-        ]
-
-        if all(marker in content for marker in required_markers):
-            return content
-
         min_separation = analysis_context.get("min_separation_km")
         uncertainty_score = analysis_context.get("uncertainty_score")
         debris_outlier = analysis_context.get("is_debris_outlier")
@@ -205,27 +203,93 @@ class RAGEngine:
         event_class = analysis_context.get("event_class")
         risk_band = analysis_context.get("risk_band")
         tca_minutes = analysis_context.get("tca_minutes")
+        density_band = analysis_context.get("density_band")
+        zone_crossing_detected = analysis_context.get("zone_crossing_detected")
+        zone_crossing_cells = analysis_context.get("zone_crossing_cells")
+        zone_risk_penalty = analysis_context.get("zone_risk_penalty")
+        confirmed_collision = analysis_context.get("is_confirmed_collision")
 
         distance_factor = self._distance_factor(min_separation)
         uncertainty_factor = self._uncertainty_factor(uncertainty_score)
-        debris_factor = self._debris_factor(debris_outlier)
-        anomaly_factor = self._anomaly_factor(anomaly_score)
-        assessment = self._assessment_line(event_class, risk_band, distance_factor, uncertainty_factor, tca_minutes)
-        mitigation_1, mitigation_2 = self._mitigation_lines(event_class, risk_band, distance_factor, uncertainty_factor)
+        assessment = self._clean_line(self._extract_assessment(content)) or self._assessment_line(
+            event_class,
+            confirmed_collision,
+            risk_band,
+            distance_factor,
+            uncertainty_factor,
+            tca_minutes,
+            zone_crossing_detected,
+        )
+        event_severity = self._event_severity_line(
+            event_class,
+            confirmed_collision,
+            min_separation,
+            analysis_context.get("closest_distance_km"),
+            tca_minutes,
+        )
+        zone_transit = self._zone_transit_line(
+            zone_crossing_detected,
+            zone_crossing_cells,
+            zone_risk_penalty,
+        )
+        environment = self._environment_line(
+            uncertainty_score,
+            density_band,
+            debris_outlier,
+            anomaly_score,
+        )
+        mitigation_1, mitigation_2 = self._mitigation_lines(
+            event_class,
+            confirmed_collision,
+            risk_band,
+            distance_factor,
+            uncertainty_factor,
+            zone_crossing_detected,
+        )
+        extracted_mitigations = self._extract_mitigation_lines(content)
+        mitigation_1 = self._clean_line(extracted_mitigations[0]) if extracted_mitigations else mitigation_1
+        mitigation_2 = self._clean_line(extracted_mitigations[1]) if len(extracted_mitigations) > 1 else mitigation_2
 
         return "\n".join(
             [
                 f"Assessment: {assessment}",
                 "Contributing Factors:",
-                f"- Distance Factor: {distance_factor}",
-                f"- Uncertainty Factor: {uncertainty_factor}",
-                f"- Debris Context: {debris_factor}",
-                f"- Anomaly Level: {anomaly_factor}",
+                f"- Event Severity: {event_severity}",
+                f"- Zone Transit: {zone_transit}",
+                f"- Environment: {environment}",
                 "Mitigation Strategy:",
                 f"- {mitigation_1}",
                 f"- {mitigation_2}",
             ]
         )
+
+    @staticmethod
+    def _clean_line(value: Any) -> str | None:
+        text = " ".join(str(value or "").strip().split())
+        return text or None
+
+    def _extract_assessment(self, content: str) -> str | None:
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Assessment:"):
+                return stripped.partition(":")[2].strip()
+        return None
+
+    def _extract_mitigation_lines(self, content: str) -> list[str]:
+        lines = []
+        capture = False
+        for raw_line in content.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("Mitigation Strategy:"):
+                capture = True
+                continue
+            if capture and stripped.endswith(":") and not stripped.startswith("-"):
+                break
+            if capture and stripped.startswith("-"):
+                lines.append(stripped.lstrip("-").strip())
+        return lines
 
     @staticmethod
     def _distance_factor(min_separation: Any) -> str:
@@ -281,13 +345,125 @@ class RAGEngine:
             return "medium anomaly signal; monitor confidence changes"
         return "low anomaly signal; confidence is relatively stable"
 
+    def _event_severity_line(
+        self,
+        event_class: Any,
+        confirmed_collision: Any,
+        min_separation: Any,
+        closest_distance: Any,
+        tca_minutes: Any,
+    ) -> str:
+        try:
+            separation_value = float(
+                min_separation if min_separation is not None else closest_distance
+            )
+        except (TypeError, ValueError):
+            separation_value = None
+        try:
+            tca_value = float(tca_minutes)
+        except (TypeError, ValueError):
+            tca_value = None
+
+        if bool(confirmed_collision) or event_class == "collision":
+            headline = "collision-confirmed geometry"
+        elif event_class == "super_close_call":
+            headline = "dangerous near-miss"
+        elif event_class == "close_approach":
+            headline = "close approach"
+        else:
+            headline = f"{self._distance_factor(separation_value)} conjunction"
+
+        details = []
+        if separation_value is not None:
+            details.append(f"min separation {separation_value:.1f} km")
+        if tca_value is not None:
+            details.append(f"TCA T+{int(round(tca_value))} min")
+        if not details:
+            return f"{headline}; insufficient telemetry."
+        return f"{headline}; {', '.join(details)}."
+
+    @staticmethod
+    def _zone_transit_line(
+        zone_crossing_detected: Any,
+        zone_crossing_cells: Any,
+        zone_risk_penalty: Any,
+    ) -> str:
+        if zone_crossing_detected is None:
+            return "insufficient telemetry."
+        if not bool(zone_crossing_detected):
+            return "no uncertainty-zone crossing detected in the screened path."
+
+        try:
+            cells = int(zone_crossing_cells)
+        except (TypeError, ValueError):
+            cells = None
+        try:
+            penalty = float(zone_risk_penalty)
+        except (TypeError, ValueError):
+            penalty = None
+
+        cell_text = (
+            f"crosses {cells} uncertainty-zone cell{'s' if cells != 1 else ''}"
+            if cells is not None
+            else "crosses an uncertainty-zone segment"
+        )
+        if penalty is not None and penalty > 0:
+            return f"{cell_text}; corridor hazard is elevated."
+        return f"{cell_text}; use conservative margins through that segment."
+
+    def _environment_line(
+        self,
+        uncertainty_score: Any,
+        density_band: Any,
+        debris_outlier: Any,
+        anomaly_score: Any,
+    ) -> str:
+        parts: list[str] = []
+
+        if uncertainty_score is not None:
+            try:
+                uncertainty_value = float(uncertainty_score)
+                parts.append(
+                    f"uncertainty {uncertainty_value:.0f}% ({self._uncertainty_factor(uncertainty_value)})"
+                )
+            except (TypeError, ValueError):
+                pass
+
+        if density_band:
+            parts.append(f"density {str(density_band).lower()}")
+
+        debris_factor = self._debris_factor(debris_outlier)
+        if debris_factor != "insufficient telemetry":
+            if bool(debris_outlier):
+                parts.append("debris outlier present")
+            else:
+                parts.append("no debris outlier flag")
+
+        if anomaly_score is not None:
+            try:
+                anomaly_value = float(anomaly_score)
+                if anomaly_value >= 70:
+                    parts.append(f"anomaly {anomaly_value:.0f}% (high)")
+                elif anomaly_value >= 35:
+                    parts.append(f"anomaly {anomaly_value:.0f}% (moderate)")
+                else:
+                    parts.append(f"anomaly {anomaly_value:.0f}% (low)")
+            except (TypeError, ValueError):
+                pass
+
+        if not parts:
+            return "insufficient telemetry."
+        return f"{', '.join(parts)}."
+
     @staticmethod
     def _assessment_line(
         event_class: Any,
+        confirmed_collision: Any,
         risk_band: Any,
         distance_factor: str,
         uncertainty_factor: str,
         tca_minutes: Any,
+        zone_crossing_detected: Any,
     ) -> str:
         if distance_factor == "insufficient telemetry" or uncertainty_factor == "insufficient telemetry":
             return "insufficient telemetry for full risk interpretation."
@@ -295,15 +471,19 @@ class RAGEngine:
             tca_value = float(tca_minutes)
         except (TypeError, ValueError):
             tca_value = None
-        if bool(event_class == "collision"):
+        if bool(confirmed_collision) or bool(event_class == "collision"):
             return "Tracked geometry indicates a collision event inside the active screening window."
         if event_class == "super_close_call":
+            if bool(zone_crossing_detected):
+                return "A dangerous near-miss is forming and the path crosses an uncertainty zone, so treat the pass conservatively."
             if tca_value is not None and tca_value <= 120:
                 return "A super-close conjunction is approaching inside the active window and deserves immediate operator attention."
             return "A super-close conjunction is present in the active window and remains operationally dangerous even without confirmed impact."
         if distance_factor in {"collision path", "super close"} and uncertainty_factor in {"medium", "high"}:
             return "Proximity is extremely tight and environmental uncertainty increases residual hazard around the encounter."
         if distance_factor == "close" and uncertainty_factor in {"medium", "high"}:
+            if zone_crossing_detected is False:
+                return "A close approach is being tracked, but no uncertainty-zone crossing is detected in the screened path."
             return "Proximity is tight and environmental uncertainty is elevated."
         if distance_factor == "moderate" and (uncertainty_factor == "high" or str(risk_band) in {"HIGH", "SEVERE"}):
             return "Separation is moderate, but surrounding risk context keeps the event operationally significant."
@@ -312,28 +492,36 @@ class RAGEngine:
     @staticmethod
     def _mitigation_lines(
         event_class: Any,
+        confirmed_collision: Any,
         risk_band: Any,
         distance_factor: str,
         uncertainty_factor: str,
+        zone_crossing_detected: Any,
     ) -> tuple[str, str]:
-        if bool(event_class == "collision"):
+        if bool(confirmed_collision) or bool(event_class == "collision"):
             return (
                 "Escalate immediately and halt nominal timeline assumptions because the event is collision-confirmed.",
                 "Assess mission loss, debris-generation consequences, and downstream conjunction cascade risk.",
             )
+        if zone_crossing_detected is True:
+            zone_action = "Use conservative thresholds while the track crosses the uncertainty-zone segment."
+        elif zone_crossing_detected is False:
+            zone_action = "No uncertainty-zone crossing detected; focus on conjunction validation and TCA updates."
+        else:
+            zone_action = "Zone-transit telemetry is incomplete; verify corridor risk before committing to action."
         if event_class == "super_close_call" or distance_factor in {"collision path", "super close"}:
             return (
                 "Increase tracking cadence immediately and validate the conjunction with higher-fidelity propagation.",
-                "Prepare an avoidance option or stand-down decision before the event window tightens further.",
+                zone_action,
             )
         if uncertainty_factor == "high" or str(risk_band) in {"HIGH", "SEVERE"}:
             return (
                 "Increase tracking cadence and validate inputs from additional sources.",
-                "Use conservative decision thresholds until uncertainty decreases.",
+                zone_action,
             )
         return (
             "Maintain nominal monitoring and scheduled conjunction assessments.",
-            "Re-check risk after the next telemetry refresh or orbit update.",
+            zone_action,
         )
 
 rag_engine = RAGEngine()

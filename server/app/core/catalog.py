@@ -33,6 +33,12 @@ UNCERTAINTY_GRID_LAT_STEP_DEG = 12.0
 UNCERTAINTY_GRID_LON_STEP_DEG = 12.0
 UNCERTAINTY_CELL_LIMIT = 24
 HIGH_UNCERTAINTY_ZONE_THRESHOLD = 65.0
+ZONE_BASE_RADIUS_KM = 150.0
+ZONE_MAX_EXTRA_RADIUS_KM = 900.0
+ZONE_DENSITY_SPREAD_LIMIT = 0.22
+ZONE_MIN_ALTITUDE_HALF_SPAN_KM = 90.0
+ZONE_MAX_ALTITUDE_HALF_SPAN_KM = 320.0
+ZONE_SEGMENT_CHECK_STEPS = 5
 REDIS_CACHE_KEY = "kesslerx:satellites"
 LOCAL_CACHE_PATH = Path(__file__).resolve().parents[2] / "tle_cache.json"
 
@@ -187,6 +193,34 @@ def distance_km(left: dict[str, float], right: dict[str, float]) -> float:
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
+def _distance_xyz(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+    dx = left[0] - right[0]
+    dy = left[1] - right[1]
+    dz = left[2] - right[2]
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+
+
+def _segment_point_distance_km(
+    start: tuple[float, float, float],
+    end: tuple[float, float, float],
+    point: tuple[float, float, float],
+) -> float:
+    sx, sy, sz = start
+    ex, ey, ez = end
+    px, py, pz = point
+    dx = ex - sx
+    dy = ey - sy
+    dz = ez - sz
+    length_sq = dx * dx + dy * dy + dz * dz
+    if length_sq <= 0:
+        return _distance_xyz(start, point)
+
+    t = ((px - sx) * dx + (py - sy) * dy + (pz - sz) * dz) / length_sq
+    t = _clamp(t, 0.0, 1.0)
+    closest = (sx + dx * t, sy + dy * t, sz + dz * t)
+    return _distance_xyz(closest, point)
+
+
 def _julian_date(dt: datetime) -> float:
     jd, fr = jday(
         dt.year,
@@ -223,6 +257,93 @@ def _eci_to_lat_lon(x: float, y: float, z: float, when: datetime) -> tuple[float
     hyp = math.sqrt(x_ecef * x_ecef + y_ecef * y_ecef)
     lat = math.atan2(z_ecef, hyp)
     return math.degrees(lat), math.degrees(lon)
+
+
+def _eci_to_ecef_xyz(x: float, y: float, z: float, when: datetime) -> tuple[float, float, float]:
+    gmst = _gmst_radians(when)
+    cos_gmst = math.cos(gmst)
+    sin_gmst = math.sin(gmst)
+    return (
+        x * cos_gmst + y * sin_gmst,
+        -x * sin_gmst + y * cos_gmst,
+        z,
+    )
+
+
+def _lat_lon_alt_to_cartesian(lat: float, lon: float, orbital_radius_km: float) -> tuple[float, float, float]:
+    lat_rad = math.radians(lat)
+    lon_rad = math.radians(lon)
+    return (
+        orbital_radius_km * math.cos(lat_rad) * math.cos(lon_rad),
+        orbital_radius_km * math.sin(lat_rad),
+        orbital_radius_km * math.cos(lat_rad) * math.sin(lon_rad),
+    )
+
+
+def _zone_effective_radius_km(uncertainty_score: float | None, total_objects: int | None) -> float:
+    score = _clamp(_safe_float(uncertainty_score) or 0.0, 0.0, 100.0)
+    radius_km = ZONE_BASE_RADIUS_KM + (score / 100.0) * ZONE_MAX_EXTRA_RADIUS_KM
+    density_spread_boost = min((total_objects or 0) / 90.0, ZONE_DENSITY_SPREAD_LIMIT)
+    return radius_km * (1.0 + density_spread_boost)
+
+
+def _zone_altitude_half_span_km(effective_radius_km: float | None) -> float:
+    radius_km = max(_safe_float(effective_radius_km) or 0.0, 0.0)
+    return _clamp(
+        radius_km * 0.45,
+        ZONE_MIN_ALTITUDE_HALF_SPAN_KM,
+        ZONE_MAX_ALTITUDE_HALF_SPAN_KM,
+    )
+
+
+def _normalize_longitude_deg(lon: float) -> float:
+    normalized = ((lon + 180.0) % 360.0) - 180.0
+    return 180.0 if normalized == -180.0 and lon > 0 else normalized
+
+
+def _longitude_delta_deg(left: float, right: float) -> float:
+    return abs(((left - right + 180.0) % 360.0) - 180.0)
+
+
+def _lerp_longitude_deg(start: float, end: float, t: float) -> float:
+    delta = ((end - start + 180.0) % 360.0) - 180.0
+    return _normalize_longitude_deg(start + delta * t)
+
+
+def _sample_within_zone_region(
+    sample: tuple[float, float, float],
+    region: dict[str, Any],
+) -> bool:
+    lat, lon, altitude_km = sample
+    return (
+        abs(lat - region["lat"]) <= region["cell_half_lat_deg"]
+        and _longitude_delta_deg(lon, region["lon"]) <= region["cell_half_lon_deg"]
+        and abs(altitude_km - region["avg_altitude_km"]) <= region["altitude_half_span_km"]
+    )
+
+
+def _segment_crosses_zone_region(
+    start_sample: tuple[float, float, float],
+    end_sample: tuple[float, float, float],
+    region: dict[str, Any],
+) -> bool:
+    if _sample_within_zone_region(start_sample, region) or _sample_within_zone_region(end_sample, region):
+        return True
+
+    start_lat, start_lon, start_altitude_km = start_sample
+    end_lat, end_lon, end_altitude_km = end_sample
+
+    for index in range(1, ZONE_SEGMENT_CHECK_STEPS):
+        t = index / ZONE_SEGMENT_CHECK_STEPS
+        interpolated_sample = (
+            start_lat + (end_lat - start_lat) * t,
+            _lerp_longitude_deg(start_lon, end_lon, t),
+            start_altitude_km + (end_altitude_km - start_altitude_km) * t,
+        )
+        if _sample_within_zone_region(interpolated_sample, region):
+            return True
+
+    return False
 
 
 def _grid_cell(lat: float, lon: float) -> tuple[int, int]:
@@ -353,6 +474,8 @@ def build_uncertainty_zones(records: list[dict[str, Any]], when: datetime) -> li
         lat_center = -90.0 + (cell["lat_index"] + 0.5) * UNCERTAINTY_GRID_LAT_STEP_DEG
         lon_center = -180.0 + (cell["lon_index"] + 0.5) * UNCERTAINTY_GRID_LON_STEP_DEG
 
+        effective_radius_km = round(_zone_effective_radius_km(uncertainty_score, total), 1)
+
         zones.append(
             {
                 "lat": round(lat_center, 3),
@@ -367,6 +490,7 @@ def build_uncertainty_zones(records: list[dict[str, Any]], when: datetime) -> li
                 "instability_score": round(instability_factor * 100.0, 1),
                 "anomaly_score": round(anomaly_factor * 100.0, 1),
                 "uncertainty_score": uncertainty_score,
+                "effective_radius_km": effective_radius_km,
             }
         )
 
@@ -413,20 +537,40 @@ def _risk_band(score: float) -> str:
     return "LOW"
 
 
-def _high_uncertainty_cells_from_zones(zones: list[dict[str, Any]]) -> set[tuple[int, int]]:
-    cells: set[tuple[int, int]] = set()
+def _screenable_uncertainty_regions_from_zones(zones: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    regions: list[dict[str, Any]] = []
     for zone in zones:
         uncertainty_score = _safe_float(zone.get("uncertainty_score"))
-        if uncertainty_score is None or uncertainty_score < HIGH_UNCERTAINTY_ZONE_THRESHOLD:
-            continue
-
         lat = _safe_float(zone.get("lat"))
         lon = _safe_float(zone.get("lon"))
-        if lat is None or lon is None:
+        avg_altitude_km = _safe_float(zone.get("avg_altitude_km"))
+        effective_radius_km = _safe_float(zone.get("effective_radius_km"))
+        cell_size_deg = _safe_float(zone.get("cell_size_deg")) or UNCERTAINTY_GRID_LAT_STEP_DEG
+        if (
+            uncertainty_score is None
+            or lat is None
+            or lon is None
+            or avg_altitude_km is None
+            or effective_radius_km is None
+        ):
             continue
-        cells.add(_grid_cell(lat, lon))
+        cell = _grid_cell(lat, lon)
+        regions.append(
+            {
+                "zone_id": cell,
+                "lat": lat,
+                "lon": _normalize_longitude_deg(lon),
+                "cell_half_lat_deg": cell_size_deg / 2.0,
+                "cell_half_lon_deg": cell_size_deg / 2.0,
+                "avg_altitude_km": max(0.0, avg_altitude_km),
+                "altitude_half_span_km": _zone_altitude_half_span_km(effective_radius_km),
+                "radius_km": effective_radius_km,
+                "uncertainty_score": uncertainty_score,
+                "is_high_uncertainty": uncertainty_score >= HIGH_UNCERTAINTY_ZONE_THRESHOLD,
+            }
+        )
 
-    return cells
+    return regions
 
 
 def _risk_color(score: float) -> str:
@@ -539,25 +683,38 @@ def _screen_pair(
     target: dict[str, Any],
     candidate: dict[str, Any],
     when: datetime,
-    high_uncertainty_cells: set[tuple[int, int]] | None = None,
+    uncertainty_zone_regions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     target_now = propagate_record(target, when)
     candidate_now = propagate_record(candidate, when)
     if not target_now or not candidate_now:
         return None
 
-    crossed_cells: set[tuple[int, int]] = set()
+    crossed_zones: dict[tuple[int, int], dict[str, Any]] = {}
 
-    def _capture_zone_cell(state: dict[str, float], sample_dt: datetime) -> None:
-        if not high_uncertainty_cells:
-            return
+    def _capture_zone_crossings(
+        state: dict[str, float],
+        sample_dt: datetime,
+        previous_sample: tuple[float, float, float] | None = None,
+    ) -> tuple[float, float, float]:
         lat, lon = _eci_to_lat_lon(state["x"], state["y"], state["z"], sample_dt)
-        cell = _grid_cell(lat, lon)
-        if cell in high_uncertainty_cells:
-            crossed_cells.add(cell)
+        current_sample = (lat, _normalize_longitude_deg(lon), state["altitude_km"])
+        if not uncertainty_zone_regions:
+            return current_sample
 
-    _capture_zone_cell(target_now, when)
-    _capture_zone_cell(candidate_now, when)
+        for region in uncertainty_zone_regions:
+            crossed = (
+                _segment_crosses_zone_region(previous_sample, current_sample, region)
+                if previous_sample is not None
+                else _sample_within_zone_region(current_sample, region)
+            )
+            if crossed:
+                crossed_zones[region["zone_id"]] = region
+
+        return current_sample
+
+    target_previous_sample = _capture_zone_crossings(target_now, when)
+    candidate_previous_sample = _capture_zone_crossings(candidate_now, when)
 
     current_separation = distance_km(target_now, candidate_now)
     min_separation = current_separation
@@ -570,8 +727,8 @@ def _screen_pair(
         if not target_state or not candidate_state:
             continue
 
-        _capture_zone_cell(target_state, sample_dt)
-        _capture_zone_cell(candidate_state, sample_dt)
+        target_previous_sample = _capture_zone_crossings(target_state, sample_dt, target_previous_sample)
+        candidate_previous_sample = _capture_zone_crossings(candidate_state, sample_dt, candidate_previous_sample)
 
         separation = distance_km(target_state, candidate_state)
         if separation < min_separation:
@@ -585,8 +742,14 @@ def _screen_pair(
 
     type_penalty = 6.0 if target["object_type"] == "PAYLOAD" else 2.0
     debris_penalty = 2.0 if candidate["object_type"] == "DEBRIS" else 0.0
-    zone_crossing_cells = len(crossed_cells)
-    zone_crossing_penalty = min(10.0, zone_crossing_cells * 2.5)
+    zone_crossing_cells = len(crossed_zones)
+    zone_crossing_penalty = min(
+        10.0,
+        sum(
+            min(2.5, max(1.0, (region.get("uncertainty_score") or 0.0) / 30.0))
+            for region in crossed_zones.values()
+        ),
+    )
     altitude_delta = abs((candidate["altitude_km"] or 0.0) - current_altitude)
     altitude_score = _clamp(14.0 - altitude_delta * 0.12, 0.0, 14.0)
     separation_score = _separation_score(min_separation)
@@ -654,7 +817,7 @@ def _screen_pair(
 def build_global_risk_alerts(
     records: list[dict[str, Any]],
     when: datetime,
-    high_uncertainty_cells: set[tuple[int, int]] | None = None,
+    uncertainty_zone_regions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     targeted_anchor_ids = {
         record["synthetic_anchor_norad_id"]
@@ -699,7 +862,7 @@ def build_global_risk_alerts(
                 continue
 
             seen_pairs.add(pair_key)
-            alert = _screen_pair(target, candidate, when, high_uncertainty_cells=high_uncertainty_cells)
+            alert = _screen_pair(target, candidate, when, uncertainty_zone_regions=uncertainty_zone_regions)
             if not alert:
                 continue
 
@@ -780,10 +943,10 @@ def build_target_analysis(records: list[dict[str, Any]], target_norad_id: str, w
     shell_debris_count = sum(1 for candidate in shell_records if candidate["object_type"] == "DEBRIS")
     shell_debris_ratio = round((shell_debris_count / len(shell_records)) * 100.0, 1) if shell_records else 0.0
     try:
-        high_uncertainty_cells = _high_uncertainty_cells_from_zones(build_uncertainty_zones(records, when))
+        uncertainty_zone_regions = _screenable_uncertainty_regions_from_zones(build_uncertainty_zones(records, when))
     except Exception:
-        logger.exception("Failed to derive high-uncertainty cell map for target analysis")
-        high_uncertainty_cells = set()
+        logger.exception("Failed to derive uncertainty-zone map for target analysis")
+        uncertainty_zone_regions = []
 
     uncertainty_profile = debris_model.get_uncertainty_score(target["norad_id"])
     heuristic_uncertainty = round(
@@ -808,7 +971,7 @@ def build_target_analysis(records: list[dict[str, Any]], target_norad_id: str, w
 
     screened_objects: list[dict[str, Any]] = []
     for candidate in candidates[:ALERT_SHORTLIST_LIMIT]:
-        alert = _screen_pair(target, candidate, when, high_uncertainty_cells=high_uncertainty_cells)
+        alert = _screen_pair(target, candidate, when, uncertainty_zone_regions=uncertainty_zone_regions)
         if not alert:
             continue
         screened_objects.append(
@@ -881,14 +1044,14 @@ def build_analysis_overview(sim_hours: float = 0.0) -> dict[str, Any]:
 
     zones: list[dict[str, Any]] = []
     alerts: list[dict[str, Any]] = []
-    high_uncertainty_cells: set[tuple[int, int]] = set()
+    uncertainty_zone_regions: list[dict[str, Any]] = []
     try:
         zones = build_uncertainty_zones(records, simulated_at)
-        high_uncertainty_cells = _high_uncertainty_cells_from_zones(zones)
+        uncertainty_zone_regions = _screenable_uncertainty_regions_from_zones(zones)
     except Exception:
         logger.exception("Failed to build uncertainty zones")
     try:
-        alerts = build_global_risk_alerts(records, simulated_at, high_uncertainty_cells=high_uncertainty_cells)
+        alerts = build_global_risk_alerts(records, simulated_at, uncertainty_zone_regions=uncertainty_zone_regions)
     except Exception:
         logger.exception("Failed to build global risk alerts")
 

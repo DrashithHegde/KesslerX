@@ -1,7 +1,19 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { gstime, propagate } from "satellite.js/dist/propagation.js";
 import { eciToGeodetic } from "satellite.js/dist/transforms.js";
+
+const ORBIT_PATH_UPDATE_INTERVAL_MS = 60;
+
+function toReferenceTimeMs(referenceTime) {
+  if (referenceTime instanceof Date) {
+    return referenceTime.getTime();
+  }
+
+  const parsed = new Date(referenceTime).getTime();
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OrbitPath — renders the orbital trajectory of a satellite as a glowing line
@@ -14,14 +26,36 @@ export default function OrbitPath({
   pastColor = "#46f3ff",
   futureColor = "#46f3ff",
   referenceTime = new Date(),
+  simTimeRef = null,
 }) {
   const dashedLineRef = useRef();
   const dashedGlowLineRef = useRef();
+  const lastPathUpdateRef = useRef(0);
+  const baseReferenceTimeMs = useMemo(() => toReferenceTimeMs(referenceTime), [referenceTime]);
+  const [activeReferenceTimeMs, setActiveReferenceTimeMs] = useState(baseReferenceTimeMs);
+
+  useEffect(() => {
+    lastPathUpdateRef.current = baseReferenceTimeMs;
+    setActiveReferenceTimeMs(baseReferenceTimeMs);
+  }, [baseReferenceTimeMs, satrec]);
+
+  useFrame(() => {
+    const liveReferenceTimeMs = Number(simTimeRef?.current);
+    if (!Number.isFinite(liveReferenceTimeMs)) return;
+    if (Math.abs(liveReferenceTimeMs - lastPathUpdateRef.current) < ORBIT_PATH_UPDATE_INTERVAL_MS) {
+      return;
+    }
+
+    lastPathUpdateRef.current = liveReferenceTimeMs;
+    setActiveReferenceTimeMs((current) =>
+      Math.abs(current - liveReferenceTimeMs) < 1 ? current : liveReferenceTimeMs
+    );
+  });
 
   const { pastPoints, futurePoints } = useMemo(() => {
     if (!satrec) return { pastPoints: [], futurePoints: [] };
 
-    const now = referenceTime instanceof Date ? referenceTime : new Date(referenceTime);
+    const now = new Date(activeReferenceTimeMs);
     const pastPts = [];
     const futurePts = [];
 
@@ -80,7 +114,7 @@ export default function OrbitPath({
     }
 
     return { pastPoints: pastPts, futurePoints: futurePts };
-  }, [referenceTime, satrec]);
+  }, [activeReferenceTimeMs, satrec]);
 
   const pastGeometry = useMemo(() => {
     if (pastPoints.length < 2) return null;

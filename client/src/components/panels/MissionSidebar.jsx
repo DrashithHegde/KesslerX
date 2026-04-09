@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { formatTPlusMinutes } from "../../utils/orbitalAnalysis";
 
 function alertColor(riskBand) {
   if (riskBand === "SEVERE") return "#ff5f57";
@@ -119,7 +120,6 @@ function TabButton({ active, label, onClick }) {
         border: active ? "1px solid rgba(0,229,255,0.28)" : "1px solid transparent",
         background: active ? "rgba(0,229,255,0.08)" : "transparent",
         color: active ? "rgba(0,229,255,0.9)" : "rgba(200,214,229,0.46)",
-        fontSize: "0.5rem",
         fontSize: "0.58rem",
         letterSpacing: "0.18em",
         textTransform: "uppercase",
@@ -143,7 +143,6 @@ function SectionTitle({ children, right }) {
     >
       <span
         style={{
-          fontSize: "0.48rem",
           fontSize: "0.56rem",
           letterSpacing: "0.17em",
           textTransform: "uppercase",
@@ -155,7 +154,6 @@ function SectionTitle({ children, right }) {
       {right ? (
         <span
           style={{
-            fontSize: "0.46rem",
             fontSize: "0.52rem",
             letterSpacing: "0.12em",
             textTransform: "uppercase",
@@ -261,7 +259,6 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
           >
             <div
               style={{
-                fontSize: "0.42rem",
                 fontSize: "0.48rem",
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
@@ -295,7 +292,10 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                 key={alertKey}
                 type="button"
                 onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => onSelectAlert?.(alert)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectAlert?.(alert);
+                }}
                 style={{
                   width: "100%",
                   textAlign: "left",
@@ -317,7 +317,6 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                   <span
                     style={{
-                      fontSize: "0.48rem",
                       fontSize: "0.54rem",
                       letterSpacing: "0.14em",
                       color: accent.chip,
@@ -342,41 +341,38 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                     display: "flex",
                     justifyContent: "space-between",
                     gap: 12,
-                    fontSize: "0.46rem",
                     fontSize: "0.52rem",
                     color: "rgba(200,214,229,0.36)",
                     textTransform: "uppercase",
                   }}
                 >
                   <span>{alert.min_separation_km} km</span>
-                  <span>T+{alert.sampled_tca_minutes}m</span>
+                  <span>{formatTPlusMinutes(alert.sampled_tca_minutes, true)}</span>
                 </div>
                 {isPairActive ? (
                   <div
                     style={{
                       marginTop: 7,
-                      fontSize: "0.44rem",
                       fontSize: "0.5rem",
                       letterSpacing: "0.12em",
                       textTransform: "uppercase",
                       color: "rgba(0,229,255,0.62)",
                     }}
                   >
-                    Scenario active
+                    Threat pair active
                   </div>
                 ) : null}
                 {isPreviewActive ? (
                   <div
                     style={{
                       marginTop: 7,
-                      fontSize: "0.44rem",
                       fontSize: "0.5rem",
                       letterSpacing: "0.12em",
                       textTransform: "uppercase",
                       color: "rgba(0,229,255,0.62)",
                     }}
                   >
-                    Satellite active | click again for scenario
+                    Target selected | click again for threat pair
                   </div>
                 ) : null}
               </button>
@@ -439,7 +435,6 @@ export default function MissionSidebar({
         <div style={{ marginBottom: 10 }}>
           <div
             style={{
-              fontSize: "0.48rem",
               fontSize: "0.56rem",
               letterSpacing: "0.2em",
               color: "rgba(0,229,255,0.64)",

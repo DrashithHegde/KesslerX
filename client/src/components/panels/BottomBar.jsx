@@ -126,7 +126,7 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
         onClick={handleClick}
         style={{
           position: "relative",
-          height: 10,
+          height: 4,
           borderRadius: 999,
           background:
             "linear-gradient(180deg, rgba(0,229,255,0.07), rgba(0,229,255,0.03))",
@@ -152,31 +152,14 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
 
         {markers.map((marker, index) => (
           <span key={`${marker.position}-${marker.color}-${index}`}>
-            {marker.label ? (
-              <span
-                style={{
-                  position: "absolute",
-                  left: `${marker.position * 100}%`,
-                  bottom: `calc(100% + ${index % 2 === 0 ? 10 : 24}px)`,
-                  transform: "translateX(-50%)",
-                  fontSize: "0.48rem",
-                  letterSpacing: "0.12em",
-                  color: marker.color,
-                  textTransform: "uppercase",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {marker.label}
-              </span>
-            ) : null}
             <span
               style={{
                 position: "absolute",
                 left: `${marker.position * 100}%`,
                 top: "50%",
                 transform: "translate(-50%, -50%)",
-                width: marker.label ? 9 : 8,
-                height: marker.label ? 9 : 8,
+                width: 6,
+                height: 6,
                 borderRadius: "50%",
                 background: marker.color,
                 boxShadow: `0 0 12px ${marker.color}`,
@@ -193,8 +176,8 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
             top: "50%",
             left: `${progress * 100}%`,
             transform: "translate(-50%, -50%)",
-            width: 16,
-            height: 16,
+            width: 11,
+            height: 11,
             borderRadius: "50%",
             background: "radial-gradient(circle at 35% 35%, #8ef7ff 0%, #00cfe8 45%, #081118 100%)",
             border: "1px solid rgba(190,252,255,0.78)",
@@ -214,8 +197,6 @@ export default function BottomBar({
   onSimComplete,
   onSimSpeedChange,
   onSimReset,
-  onOpenAnalysis,
-  analysisAvailable,
   simActionPending = false,
   simProgressRef,
   onSimProgressChange,
@@ -343,6 +324,9 @@ export default function BottomBar({
       .filter(Boolean)
       .sort((left, right) => left.position - right.position)
     : [];
+  const nextMarker = scenarioTimelineMarkers.find(
+    (marker) => marker.position >= timelineProgress
+  ) || scenarioTimelineMarkers[scenarioTimelineMarkers.length - 1] || null;
 
   return (
     <div
@@ -364,7 +348,7 @@ export default function BottomBar({
           width: "760px",
           maxWidth: "100%",
           borderRadius: 14,
-          padding: "11px 14px 12px",
+          padding: "8px 12px",
           border: "1px solid rgba(0,229,255,0.13)",
           boxShadow: "0 14px 34px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.02)",
           background:
@@ -375,22 +359,22 @@ export default function BottomBar({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 12,
-            minHeight: 40,
+            gap: 10,
+            minHeight: 28,
           }}
         >
           <button
             type="button"
             onClick={handlePlayPause}
             style={{
-              width: 38,
-              height: 38,
+              width: 34,
+              height: 34,
               borderRadius: 10,
               border: "1px solid rgba(0,229,255,0.34)",
               background: "linear-gradient(180deg, rgba(0,229,255,0.16), rgba(0,229,255,0.05))",
               color: "#00e5ff",
               fontFamily: "'DM Mono', monospace",
-              fontSize: "0.9rem",
+              fontSize: "0.82rem",
               boxShadow: "0 0 16px rgba(0,229,255,0.12)",
               cursor: "pointer",
               transition: "all 0.2s ease",
@@ -402,16 +386,18 @@ export default function BottomBar({
 
           <div
             style={{
-              padding: "7px 12px",
-              borderRadius: 999,
-              border: "1px solid rgba(0,229,255,0.12)",
-              background: "rgba(11,15,20,0.56)",
-              fontSize: "0.56rem",
+              minWidth: 118,
+              padding: "2px 4px",
+              borderRadius: 0,
+              border: "none",
+              background: "transparent",
+              fontSize: "0.44rem",
               letterSpacing: "0.14em",
-              color: "rgba(214,228,239,0.56)",
+              color: "rgba(214,228,239,0.42)",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
               flexShrink: 0,
+              textAlign: "center",
             }}
           >
             {simRunning ? "Playback live" : "Scenario standby"}
@@ -422,26 +408,27 @@ export default function BottomBar({
               flex: 1,
               minWidth: 180,
               display: "grid",
-              gap: 7,
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid rgba(0,229,255,0.08)",
-              background: "linear-gradient(180deg, rgba(11,15,20,0.54), rgba(7,11,16,0.76))",
+              gap: 4,
+              padding: "2px 2px 4px",
+              borderRadius: 0,
+              border: "none",
+              background: "transparent",
             }}
           >
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
+                justifyContent: "flex-end",
                 gap: 10,
-                fontSize: "0.5rem",
+                fontSize: "0.44rem",
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
               }}
             >
-              <span style={{ color: "rgba(200,214,229,0.38)" }}>Screen Window</span>
-              <span style={{ color: "rgba(255,209,102,0.72)" }}>{scenarioTimelineMarkers.length} markers</span>
+              <span style={{ color: "rgba(255,209,102,0.72)" }}>
+                {nextMarker?.label ? `Next ${nextMarker.label}` : `${scenarioTimelineMarkers.length} events`}
+              </span>
             </div>
             <SweepTimeline
               progress={timelineProgress}
@@ -452,11 +439,11 @@ export default function BottomBar({
 
           <div
             style={{
-              padding: "7px 12px",
+              padding: "6px 10px",
               borderRadius: 999,
               border: "1px solid rgba(0,229,255,0.18)",
               background: "rgba(0,229,255,0.06)",
-              fontSize: "0.58rem",
+              fontSize: "0.54rem",
               letterSpacing: "0.16em",
               color: "rgba(111,241,255,0.88)",
               textTransform: "uppercase",
@@ -471,31 +458,32 @@ export default function BottomBar({
 
         <div
           style={{
-            marginTop: 8,
-            paddingTop: 10,
+            marginTop: 5,
+            paddingTop: 6,
             borderTop: "1px solid rgba(0,229,255,0.08)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
+            gap: 10,
+            flexWrap: "nowrap",
           }}
         >
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-              padding: "7px 10px",
+              gap: 8,
+              flexWrap: "nowrap",
+              padding: "0",
               borderRadius: 12,
-              border: "1px solid rgba(0,229,255,0.08)",
-              background: "rgba(11,15,20,0.42)",
+              border: "none",
+              background: "transparent",
+              minWidth: 0,
             }}
           >
             <span
               style={{
-                fontSize: "0.54rem",
+                fontSize: "0.48rem",
                 letterSpacing: "0.14em",
                 color: "rgba(200,214,229,0.42)",
                 textTransform: "uppercase",
@@ -518,25 +506,19 @@ export default function BottomBar({
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
+              gap: 8,
+              flexWrap: "nowrap",
               justifyContent: "flex-end",
-              padding: "7px 10px",
+              padding: "0",
               borderRadius: 12,
-              border: "1px solid rgba(0,229,255,0.08)",
-              background: "rgba(11,15,20,0.42)",
+              border: "none",
+              background: "transparent",
             }}
           >
             <CompactChip
               label="Focus Mode"
               onClick={onToggleFocusMode}
               active={focusMode}
-            />
-            <CompactChip
-              label="Open Analysis"
-              onClick={onOpenAnalysis}
-              active={analysisAvailable}
-              disabled={!analysisAvailable}
             />
             <CompactChip label="Reset" onClick={handleReset} disabled={simActionPending} />
           </div>

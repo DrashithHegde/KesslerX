@@ -1,313 +1,353 @@
 # KesslerX
 
-### Orbital Risk and Space Debris Cascade Simulation Platform
+Orbital intelligence for conjunction risk, debris uncertainty, and space sustainability.
 
----
+## What KesslerX is
 
-## Overview
+KesslerX is a real-time orbital risk analysis and simulation platform built to make conjunction risk easier to understand, inspect, and explain.
 
-KesslerX is a real-time orbital intelligence and risk analysis system designed to monitor satellite motion, detect potential collision risks, model uncertain debris environments, and simulate cascading orbital events.
+It combines:
+- physics-based orbit propagation
+- global risk screening
+- uncertainty-zone modeling
+- anomaly-aware environmental scoring
+- AI-generated operator briefings
 
-It transforms raw orbital data into actionable insights using a combination of physics-based modeling, machine learning, and AI-driven explanations.
+Instead of showing only raw catalog tracks, KesslerX turns orbital data into a tactical, visual decision-support experience.
 
-Unlike traditional tracking tools, KesslerX goes beyond known objects to model **uncertainty and hidden risk in Earth’s orbital environment**.
+## Problem
 
----
+Earth orbit is getting more crowded with:
+- active satellites
+- spent rocket bodies
+- tracked debris
+- untracked environmental uncertainty
 
-##  Problem Statement
+The risk is not only a single collision. The real concern is cascading fragmentation, also known as Kessler Syndrome, where one impact creates debris that increases the probability of future impacts.
 
-Earth’s orbit is increasingly congested with active satellites and debris, leading to a growing risk of collisions.
+Most tools are good at tracking known objects, but weaker at:
+- visual clarity
+- uncertainty-aware reasoning
+- operator-friendly risk interpretation
 
-A major threat is the **Kessler Syndrome**, where collisions generate debris that trigger further collisions, potentially making orbital regions unusable.
+## Solution
 
-Existing systems:
+KesslerX provides a unified system for:
+- tracking orbital objects on an interactive globe
+- screening close approaches and high-risk conjunctions
+- modeling uncertainty zones in orbital space
+- generating concise AI operational briefings from structured telemetry
 
-* Focus on tracking known objects
-* Provide raw positional data
+## Why it matters
 
-But they lack:
+KesslerX is designed as a decision-support and demonstration platform for:
+- safer satellite operations
+- clearer orbital-risk communication
+- research and education around debris growth
+- hackathon and prototype environments where explainability matters as much as raw math
 
-* intuitive visualization
-* uncertainty-aware modeling
-* explainable risk insights
+## Core capabilities
 
----
+### 1. Interactive 3D orbital view
 
-## 🎯 Solution
+- Earth rendered with a cinematic tactical HUD
+- smooth object propagation using SGP4
+- selectable satellites, debris, and rocket bodies
+- threat-pair highlighting and focused inspection
 
-KesslerX is a **decision-support and simulation system** that:
+### 2. Conjunction screening
 
-* Tracks satellites in real time
-* Detects close approaches and risk events
-* Models uncertain and potentially dangerous regions
-* Generates explainable insights using AI
+- identifies meaningful close approaches
+- computes minimum separation and sampled time of closest approach
+- ranks threats with a conjunction risk score
+- supports alert-based pair activation and analysis
 
----
+### 3. Fixed 6-hour simulation window
 
-## 🛰️ Key Features
+- simulation playback is based on a continuous simulation clock
+- event timestamps are precomputed for the selected object
+- timeline markers remain fixed during playback
+- object motion stays smooth while the UI remains deterministic
 
-### 🌍 Live 3D Visualization
+### 4. Uncertainty-zone modeling
 
-* Interactive Earth with satellites and debris
-* Smooth orbital motion using real-time propagation
-* Cinematic and minimal UI
+- builds orbital-space uncertainty zones from tracked catalog conditions
+- uses density, debris ratio, altitude variability, and anomaly signals
+- renders soft volumetric hazard regions above Earth
+- reports whether an inspected path crosses uncertainty-zone cells
 
----
+### 5. ML-driven anomaly contribution
 
-###  Physics-Based Orbital Engine
+- uses Isolation Forest for unsupervised anomaly detection
+- models unusual orbital behavior from:
+  - mean motion
+  - eccentricity
+  - inclination
+- contributes to environmental uncertainty, not direct collision certainty
 
-* Uses TLE (Two-Line Element) data
-* Propagates motion using SGP4
-* Predicts satellite positions over time
+### 6. Deep analysis and AI briefing
 
----
+- per-target risk overview
+- closest approach context
+- orbital regime and shell metrics
+- debris density and uncertainty context
+- concise AI-generated mitigation-oriented explanation
 
-### ⚠️ Dynamic Risk Detection
+## Feature summary
 
-* Identifies close approaches (conjunctions)
-* Computes:
+- Real-time catalog visualization
+- Smooth orbital propagation
+- Threat-pair focus mode
+- Alerts panel with pair activation
+- Precomputed event timeline
+- Deep analysis panel
+- AI operational brief
+- Uncertainty-zone crossing analysis
 
-  * Time of Closest Approach (TCA)
-  * Minimum separation distance
-* Assigns a risk score
+## Architecture
 
----
+```mermaid
+flowchart LR
+    A[Space-Track / Cached TLE Catalog] --> B[FastAPI Backend]
+    B --> C[Catalog Screening Engine]
+    B --> D[Uncertainty Zone Builder]
+    D --> E[Isolation Forest Scoring]
+    C --> F[Alerts + Target Analysis API]
+    E --> F
+    F --> G[React + Vite Frontend]
+    G --> H[Three.js / React Three Fiber Globe]
+    G --> I[Timeline + HUD + Panels]
+    F --> J[RAG / AI Brief Generator]
+    J --> I
+```
 
-### 🌫️ Uncertainty Zone Modeling
+## How the system works
 
-* Divides space into spatial regions (lat/lon grid)
+### Data flow
 
-* Evaluates:
+1. Fetch or load the latest orbital catalog and TLE cache.
+2. Parse orbital records and propagate positions with SGP4.
+3. Build global alerts and target-specific conjunction analysis.
+4. Construct uncertainty zones from environmental crowding and anomaly context.
+5. Score anomaly contribution with Isolation Forest.
+6. Serve structured analysis to the frontend.
+7. Render the globe, timeline, panels, and AI explanation.
 
-  * object density
-  * debris ratio
-  * velocity variance
-  * orbital instability
-  * anomaly score (ML)
+### Frontend responsibilities
 
-* Outputs probabilistic risk zones (not exact threats)
+- render Earth, object markers, and orbit paths
+- simulate continuous motion over the 6-hour playback window
+- precompute and freeze selected-object timeline events
+- manage UI state for alerts, pair tracking, focus mode, and panels
 
----
+### Backend responsibilities
 
-### 🤖 Machine Learning (Anomaly Detection)
+- ingest and cache catalog data
+- propagate records for screening and analysis
+- compute alerts and per-target risk summaries
+- build uncertainty zones and zone-crossing context
+- generate AI briefings from structured context
 
-* Model: Isolation Forest (scikit-learn)
-* Detects:
+## Risk logic
 
-  * unusual clustering
-  * abnormal orbital behavior
-* Contributes to uncertainty scoring
+KesslerX does not use closest distance alone.
 
----
+Threat ranking can stay high even when a pass is not extremely small if other factors increase operational concern.
 
-### 💥 Scenario Simulation Engine
+Key contributors include:
+- minimum separation distance
+- urgency of time to closest approach
+- altitude-shell proximity
+- target consequence, especially payloads
+- debris counterpart penalties
+- uncertainty-zone crossings
 
-* Inject synthetic satellites
-* Trigger collision events
-* Generate debris clouds
-* Simulate cascade effects
+This means a pair can still appear as a serious top threat even when its closest pass is not below a tiny threshold.
 
----
+## Uncertainty modeling
 
-### 🎬 Cinematic Simulation Mode
+Uncertainty zones are environmental, not deterministic collision objects.
 
-* Focus on selected object and relevant threats
-* Reduces clutter for clearer analysis
+The current zone logic considers:
+- object density in an orbital cell
+- debris ratio
+- altitude variability / instability
+- anomaly contribution from Isolation Forest
 
----
+Rendered zone size scales with uncertainty score, and path-crossing checks are aligned with the zone footprint and altitude shell so visual context and analysis are more consistent.
 
-### ⏱️ Timeline & Event System
+## Isolation Forest in KesslerX
 
-* Precomputed event timestamps (6-hour window)
+Isolation Forest is used as an unsupervised anomaly detector.
 
-* Displays:
+It is trained on catalog orbital features such as:
+- mean motion
+- eccentricity
+- inclination
 
-  * close approaches
-  * high-risk events
-  * collision points
+Important clarification:
+- unsupervised does not mean no data
+- it means no labeled data is required
 
-* Color-coded markers
+In KesslerX, the model helps estimate environmental anomaly and uncertainty. It does not directly decide whether two objects will collide.
 
-* Events remain fixed during playback (no recomputation)
+## RAG / AI operational brief
 
----
+The AI layer is used for explainability, not core scoring.
 
-### 📊 Deep Analysis Dashboard
+It receives structured inputs such as:
+- risk score and risk band
+- event class
+- minimum separation
+- TCA
+- debris share
+- density band
+- anomaly score
+- uncertainty-zone crossing information
 
-* Risk score
-* Closest objects
-* Debris environment metrics
-* Orbital regime
-* Structured insights
+It returns a short operator-style brief with:
+- assessment
+- contributing factors
+- mitigation strategy
 
----
+Current implementation uses Gemini through LangChain integration on the backend.
 
-### 🧠 AI Operational Brief (RAG)
-
-* Model: Gemini 2.5 Flash
-* Uses structured system outputs as context
-* Generates:
-
-  * explanation
-  * reasoning
-  * mitigation suggestions
-
-> AI is used for explainability, not core decision-making.
-
----
-
-## ⚙️ Tech Stack
+## Tech stack
 
 ### Frontend
 
-* React (Vite)
-* Three.js + React Three Fiber
-* Tailwind CSS
-
----
+- React 18
+- Vite
+- Three.js
+- React Three Fiber
+- Drei
+- Tailwind CSS tooling
+- satellite.js
 
 ### Backend
 
-* FastAPI (Python)
-* httpx
-* pydantic + dotenv
+- FastAPI
+- Uvicorn
+- httpx
+- pydantic-settings
+- python-dotenv
+- sgp4
 
----
+### ML and AI
 
-### Orbital Computation
+- scikit-learn
+- NumPy
+- Isolation Forest
+- LangChain
+- langchain-google-genai
+- Gemini-based briefing generation
 
-* satellite.js (frontend)
-* python-sgp4 (backend)
+### Caching / infra
 
----
+- local catalog cache
+- optional Redis integration
 
-### Data
+## Project structure
 
-* Space-Track TLE API
-* Local cache
+```text
+client/
+  src/
+    components/
+      map/        # Globe, orbit paths, uncertainty zones
+      panels/     # Alerts, bottom bar, deep analysis, tactical insight
+      hud/        # HUD overlays and status displays
+      ui/         # Shared UI primitives
 
----
+server/
+  app/
+    api/         # Analysis and catalog API routes
+    core/        # Catalog screening, config, RAG, Redis helpers
+    ml/          # Isolation Forest uncertainty model
+```
 
-### Machine Learning
+## Dataset
 
-* scikit-learn (Isolation Forest)
-* NumPy
+KesslerX uses orbital catalog / TLE-style data sourced through Space-Track-compatible flows and local cache fallback.
 
----
+The system currently works with:
+- tracked payloads
+- rocket bodies
+- tracked debris
 
-### AI / RAG
+## Target users
 
-* Gemini 2.5 Flash
-* LangChain (wrapper only)
+- satellite operators
+- orbital-risk researchers
+- students learning space traffic and debris behavior
+- sustainability and policy groups
+- analysts and consultants demonstrating conjunction-risk workflows
+- hackathon judges and prototype reviewers who need a clear end-to-end story
 
----
+## Hackathon framing
 
-### Optional Infrastructure
+### Problem
 
-* Redis (caching & simulation state)
-* Docker (deployment)
+Orbital congestion is growing faster than most operators can intuitively reason about from raw telemetry alone.
 
----
+### Impact
 
-## 🔄 System Workflow
+- higher conjunction workload
+- harder communication of uncertain risk
+- limited public understanding of debris cascade effects
 
-1. Fetch satellite data (TLE)
-2. Propagate orbits using SGP4
-3. Detect close approaches
-4. Compute risk scores
-5. Generate uncertainty zones
-6. Apply anomaly detection
-7. Simulate scenarios
-8. Generate AI insights
+### KesslerX contribution
 
----
+KesslerX makes orbital risk:
+- visible
+- explainable
+- interactive
 
-## 👥 Who Benefits
+## Limitations
 
-### 🛰️ Satellite Operators (small–mid scale)
+- not a real flight operations system
+- not a maneuver execution platform
+- depends on public / cached orbital data quality
+- uncertainty zones are probabilistic, not exact threat volumes
+- AI briefing is explainability support, not authoritative decision logic
+- current simulation window is limited to 6 hours
 
-* Improved risk awareness
-* Better understanding of close approaches
+## Future scope
 
----
+- longer simulation windows
+- higher-fidelity conjunction refinement
+- maneuver planning support
+- debris cloud evolution after collision
+- scenario injection and controlled collision demos
+- temporal smoothing of uncertainty zones
+- saved sessions and scenario replay
+- Redis-backed cache / state management for heavier deployments
+- operator collaboration workflows
+- richer model benchmarking beyond Isolation Forest
 
-### 🧠 Researchers & Students
-
-* Learn orbital mechanics visually
-* Experiment with simulations
-
----
-
-### 📊 Space Analytics & Consulting
-
-* Decision-support and demonstration tool
-
----
-
-### 🌍 Space Sustainability & Policy Groups
-
-* Visualize debris growth
-* Understand cascade risks
-
----
-
-### 🎓 Educational Use
-
-* Makes complex space concepts intuitive
-* Strong visualization-driven learning
-
----
-
-## ⚠️ Scope & Limitations
-
-* Not a real-time control system
-* Does not execute collision avoidance maneuvers
-* Depends on public TLE data
-* Uncertainty zones are probabilistic
-* Limited simulation window (6 hours)
-
----
-
-## 🚀 Future Scope
-
-* Temporal smoothing of uncertainty zones
-* Advanced ML models
-* Long-term debris prediction
-* Real maneuver simulation
-* Integration with real-world systems
-
----
-
-## 💡 Positioning
-
-KesslerX is not just a tracker—it is an **orbital intelligence system** that combines physics, machine learning, and AI to provide deeper insights into collision risk, uncertainty, and space sustainability.
-
----
-
-## 🏁 Getting Started
+## Getting started
 
 ### Prerequisites
 
-* Node.js (v18+)
-* Python (v3.10+)
+- Node.js 18+
+- Python 3.10+
 
----
-
-### Backend Setup
+### Backend
 
 ```bash
 cd server
 python -m venv .venv
-source .venv/bin/activate   # or .venv\Scripts\activate (Windows)
-pip install -r requirements.txt
 
-# Run server
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+# source .venv/bin/activate
+
+pip install -r requirements.txt
 python run.py
 ```
 
----
-
-### Frontend Setup
+### Frontend
 
 ```bash
 cd client
@@ -315,8 +355,29 @@ npm install
 npm run dev
 ```
 
----
+### Environment
 
-## 🎯 Final Tagline
+Configure values in:
 
-From orbital data to actionable intelligence — understanding risk, uncertainty, and the future of space.
+- `server/.env`
+- `server/.env.example`
+
+Optional services such as Redis can be enabled, but the project can run without them in prototype mode.
+
+Current default setup uses the local cache backend. Redis support exists in the codebase, but it is optional and only activates when `CACHE_BACKEND=redis` is configured.
+
+## Positioning
+
+KesslerX is not just a satellite tracker.
+
+It is an orbital intelligence prototype that combines:
+- orbital mechanics
+- uncertainty-aware environment modeling
+- anomaly detection
+- explainable AI
+
+to help users reason about the present and near-future risk landscape in Earth orbit.
+
+## Tagline
+
+From orbital data to actionable intelligence.

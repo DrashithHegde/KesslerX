@@ -7,8 +7,11 @@ const SCREENING_STEP_MINUTES = 5;
 const SCREENING_CANDIDATE_LIMIT = 24;
 const VELOCITY_SAMPLE_SECONDS = 1;
 const TIMELINE_WINDOW_MINUTES = 6 * 60;
-const TIMELINE_STEP_MINUTES = 2;
+const TIMELINE_STEP_MINUTES = 1;
 const TIMELINE_EVENT_LIMIT = 48;
+const TIMELINE_CANDIDATE_LIMIT = 32;
+const TIMELINE_REFINEMENT_STEP_SECONDS = 15;
+const TIMELINE_REFINEMENT_WINDOW_SECONDS = 60;
 const CLOSE_APPROACH_THRESHOLD_KM = 80;
 const SUPER_CLOSE_CALL_THRESHOLD_KM = 20;
 
@@ -89,6 +92,13 @@ export function formatUtc(dateLike) {
     `${date.getUTCFullYear()}-${part(date.getUTCMonth() + 1)}-${part(date.getUTCDate())} ` +
     `${part(date.getUTCHours())}:${part(date.getUTCMinutes())}:${part(date.getUTCSeconds())}Z`
   );
+}
+
+export function formatTPlusMinutes(minutes, compact = false) {
+  const numeric = Number(minutes);
+  if (!Number.isFinite(numeric)) return "--";
+  const rounded = Math.round(numeric);
+  return compact ? `T+${rounded}m` : `T+${rounded} min`;
 }
 
 export function getLaunchAgeYears(launchDate) {
@@ -198,6 +208,37 @@ function buildPairRiskScore({ target, candidateType, minSeparationKm, sampledTca
     ),
     1
   );
+}
+
+function refineClosestApproachMinute(targetSatrec, candidateSatrec, startDate, coarseMinute) {
+  if (!targetSatrec || !candidateSatrec || !Number.isFinite(coarseMinute)) {
+    return coarseMinute;
+  }
+
+  let bestMinute = coarseMinute;
+  let bestSeparationKm = Infinity;
+
+  for (
+    let offsetSeconds = -TIMELINE_REFINEMENT_WINDOW_SECONDS;
+    offsetSeconds <= TIMELINE_REFINEMENT_WINDOW_SECONDS;
+    offsetSeconds += TIMELINE_REFINEMENT_STEP_SECONDS
+  ) {
+    const candidateMinute = coarseMinute + offsetSeconds / 60;
+    if (candidateMinute < 0 || candidateMinute > TIMELINE_WINDOW_MINUTES) continue;
+
+    const sampleTime = new Date(startDate.getTime() + candidateMinute * 60 * 1000);
+    const targetState = getPropagationSnapshot(targetSatrec, sampleTime);
+    const candidateState = getPropagationSnapshot(candidateSatrec, sampleTime);
+    if (!targetState || !candidateState) continue;
+
+    const separationKm = distanceKm(targetState.position, candidateState.position);
+    if (separationKm < bestSeparationKm) {
+      bestSeparationKm = separationKm;
+      bestMinute = candidateMinute;
+    }
+  }
+
+  return bestMinute;
 }
 
 function candidateScore(targetState, candidateState) {
@@ -312,7 +353,7 @@ function buildMitigations({ riskBand, target, closestApproach }) {
 
   if (closestApproach && closestApproach.sampledTcaMinutes !== null) {
     actions.push(
-      `Prioritize manual review of the closest screened approach before T+${closestApproach.sampledTcaMinutes} min to confirm whether higher-fidelity conjunction analysis is required.`
+      `Prioritize manual review of the closest screened approach before ${formatTPlusMinutes(closestApproach.sampledTcaMinutes)} to confirm whether higher-fidelity conjunction analysis is required.`
     );
   }
 
@@ -598,10 +639,12 @@ export function buildTargetTimelineEvents(target, records, windowStartDate = new
     });
   }
 
-  const shortlist = [...candidateStates].sort(
-    (left, right) =>
-      candidateScore(targetStartState, left.state) - candidateScore(targetStartState, right.state)
-  );
+  const shortlist = [...candidateStates]
+    .sort(
+      (left, right) =>
+        candidateScore(targetStartState, left.state) - candidateScore(targetStartState, right.state)
+    )
+    .slice(0, TIMELINE_CANDIDATE_LIMIT);
 
   const screeningTimes = [];
   const targetSamples = [];
@@ -638,6 +681,24 @@ export function buildTargetTimelineEvents(target, records, windowStartDate = new
     }
 
     if (!candidateBest) continue;
+
+    candidateBest.sampledTcaMinutes = refineClosestApproachMinute(
+      target.satrec,
+      candidate.target.satrec,
+      startDate,
+      candidateBest.sampledTcaMinutes
+    );
+    const refinedSampleTime = new Date(
+      startDate.getTime() + candidateBest.sampledTcaMinutes * 60 * 1000
+    );
+    const refinedTargetState = getPropagationSnapshot(target.satrec, refinedSampleTime);
+    const refinedCandidateState = getPropagationSnapshot(candidate.target.satrec, refinedSampleTime);
+    if (refinedTargetState && refinedCandidateState) {
+      candidateBest.minSeparationKm = round(
+        distanceKm(refinedTargetState.position, refinedCandidateState.position),
+        1
+      );
+    }
 
     const syntheticEvent = syntheticPairEvent(target, candidate.target);
     const eventClass = classifyTimelineEvent(

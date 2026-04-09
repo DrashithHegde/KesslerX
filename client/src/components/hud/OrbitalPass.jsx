@@ -1,9 +1,11 @@
 import { formatUtc } from "../../utils/orbitalAnalysis";
+import { SIM_WINDOW_HOURS } from "../../utils/simulationClock";
 
 export default function OrbitalPass({ analysis, simTimestamp }) {
   const now = simTimestamp ? new Date(simTimestamp) : new Date();
   const dateStr = now.toISOString().split("T")[0];
   const timeStr = now.toISOString().split("T")[1].slice(0, 8);
+  const screenWindowLabel = `${SIM_WINDOW_HOURS}HOURS`;
 
   return (
     <div
@@ -26,7 +28,7 @@ export default function OrbitalPass({ analysis, simTimestamp }) {
         SCAN {dateStr} {timeStr}Z
       </div>
       <div style={{ fontSize: "0.55rem", marginBottom: 3 }}>
-        SCREEN WINDOW: 90MIN PASS: ACTIVE-526
+        SCREEN SIM WINDOW: {screenWindowLabel}
       </div>
       <div style={{ fontSize: "0.55rem" }}>
         {analysis ? `LAST BRIEF ${formatUtc(analysis.sampledAt)}` : "TRACKED OBJECT FEED NOMINAL"}

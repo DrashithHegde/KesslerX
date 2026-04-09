@@ -30,6 +30,9 @@ class ExplanationRequest(BaseModel):
     tracked_debris: int | None = None
     objects_in_orbital_band: int | None = None
     anomaly_level: float | None = None
+    zone_crossing_detected: bool | None = None
+    zone_crossing_cells: int | None = None
+    zone_risk_penalty: float | None = None
 
 
 @router.get("/overview")
@@ -120,6 +123,9 @@ async def generate_rag_explanation(req: ExplanationRequest):
         "objects_in_orbital_band": req.objects_in_orbital_band,
         "density_score": uncertainty_result.get("density_score") if "error" not in uncertainty_result else None,
         "anomaly_score": req.anomaly_level if req.anomaly_level is not None else (uncertainty_result.get("anomaly_score") if "error" not in uncertainty_result else None),
+        "zone_crossing_detected": req.zone_crossing_detected,
+        "zone_crossing_cells": req.zone_crossing_cells,
+        "zone_risk_penalty": req.zone_risk_penalty,
         "risk_band": req.risk_band,
         "regime": req.regime,
     }
