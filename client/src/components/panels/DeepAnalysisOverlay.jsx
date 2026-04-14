@@ -195,7 +195,7 @@ function DeepAnalysisOverlay({
   };
 
   useEffect(() => {
-    if (!isOpen || !target || !analysis) {
+    if (!target || !analysis) {
       setRagExplanation(null);
       return;
     }

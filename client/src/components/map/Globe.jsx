@@ -7,6 +7,7 @@ import OrbitPath from "./OrbitPath";
 import UncertaintyZones from "./UncertaintyZones";
 import {
   buildDatasetStats,
+  buildPairTimelineEvents,
   buildTargetAnalysis,
   buildTargetTimelineEvents,
   getObjectTypeColor,
@@ -24,7 +25,7 @@ const EARTH_RADIUS = 1;
 const EARTH_POLAR_SCALE = 0.92;
 const EARTH_STAR_OCCLUDER_RADIUS = EARTH_RADIUS - 0.003;
 const MARKER_HUD_COLOR = "#d2882e";
-const SYNTHETIC_MARKER_COLOR = "#5f6872";
+
 const BASE_SATELLITE_RADIUS = 0.005;
 const SELECTED_MARKER_RADIUS = 0.022;
 const SELECTION_HALO_INNER_RADIUS = 0.05;
@@ -473,12 +474,13 @@ function SatelliteSwarm({
         simBaseTimeMs,
         deltaSeconds: delta,
         sampleStepMs: isPriorityTrack
+
           ? PRIORITY_INTERPOLATION_STEP_MS
           : BACKGROUND_INTERPOLATION_STEP_MS,
         damping: isPriorityTrack ? PRIORITY_MOTION_DAMPING : BACKGROUND_MOTION_DAMPING,
         targetVector: tmpTargetPos,
         exactVector: tmpExactPos,
-        useExactPosition: Boolean(sat.details?.is_synthetic),
+        useExactPosition: false,
       });
       if (!motion) return;
 
@@ -774,7 +776,7 @@ function PairLink({
       damping: PRIORITY_MOTION_DAMPING,
       targetVector: leftTargetVectorRef,
       exactVector: leftExactVectorRef,
-      useExactPosition: Boolean(leftSat?.details?.is_synthetic),
+      useExactPosition: false,
     });
     const rightMotion = getSmoothedMotionState({
       satrec: rightSat.satrec,
@@ -786,7 +788,7 @@ function PairLink({
       damping: PRIORITY_MOTION_DAMPING,
       targetVector: rightTargetVectorRef,
       exactVector: rightExactVectorRef,
-      useExactPosition: Boolean(rightSat?.details?.is_synthetic),
+      useExactPosition: false,
     });
     if (!leftMotion || !rightMotion) return;
 
@@ -1074,9 +1076,9 @@ function CollisionSimulationOverlay({ data, startedAt }) {
       {data.primaryImpacts.map((impact) => (
         <group key={`impact-${impact.noradId}`} position={impact.position}>
           <mesh renderOrder={8}>
-            <sphereGeometry args={[impact.isSynthetic ? 0.014 : 0.012, 14, 14]} />
+            <sphereGeometry args={[0.012, 14, 14]} />
             <meshBasicMaterial
-              color={impact.isSynthetic ? "#ff8c42" : "#ffd166"}
+              color="#ffd166"
               transparent
               opacity={0.92}
               depthTest={false}
@@ -1091,8 +1093,8 @@ function CollisionSimulationOverlay({ data, startedAt }) {
           key={`connector-${impact.noradId}`}
           start={data.midpoint}
           end={impact.position}
-          color={impact.isSynthetic ? "#ff8c42" : "#ffd166"}
-          opacity={impact.isSynthetic ? 0.28 : 0.4}
+          color="#ffd166"
+          opacity={0.4}
         />
       ))}
 
@@ -1135,9 +1137,9 @@ export default function Globe({
   focusMode = false,
   focusObjectIds = [],
   activePair = null,
-  scenarioState = null,
   uncertaintyZones = [],
   showOrbitalPaths = true,
+  showFuturePaths = false,
 }) {
   const controlsRef = useRef();
   const analysisRequestIdRef = useRef(0);
@@ -1230,107 +1232,6 @@ export default function Globe({
     return new Date(baseTime + activePair.sampled_tca_minutes * 60 * 1000);
   }, [activePair, comparedSat, selectedSat, simulatedDate]);
   const pairModeActive = Boolean(selectedSat && comparedSat && (activePair || focusMode));
-  const collisionVisualization = useMemo(() => {
-    if (
-      scenarioState?.kind !== "collision" ||
-      !scenarioState?.collisionStarted ||
-      !pairModeActive ||
-      !pairReferenceTime ||
-      !selectedSat ||
-      !comparedSat
-    ) {
-      return null;
-    }
-
-    const targetSnapshot = getPropagationSnapshot(selectedSat.satrec, pairReferenceTime);
-    const comparedSnapshot = getPropagationSnapshot(comparedSat.satrec, pairReferenceTime);
-    const approachStartTime = new Date(pairReferenceTime.getTime() - 20 * 60 * 1000);
-    const targetStartSnapshot = getPropagationSnapshot(selectedSat.satrec, approachStartTime);
-    const comparedStartSnapshot = getPropagationSnapshot(comparedSat.satrec, approachStartTime);
-    if (!targetSnapshot || !comparedSnapshot) return null;
-
-    const midpoint = [
-      (targetSnapshot.position[0] + comparedSnapshot.position[0]) / 2,
-      (targetSnapshot.position[1] + comparedSnapshot.position[1]) / 2,
-      (targetSnapshot.position[2] + comparedSnapshot.position[2]) / 2,
-    ];
-
-    const fragmentIds = new Set((scenarioState.fragmentIds || []).map((id) => String(id)));
-    const nearbyObjects = allSatData
-      .filter((sat) => {
-        const noradId = sat.details?.NORAD_CAT_ID;
-        return (
-          noradId !== selectedSat.details.NORAD_CAT_ID &&
-          noradId !== comparedSat.details.NORAD_CAT_ID
-        );
-      })
-      .map((sat) => {
-        const snapshot = getPropagationSnapshot(sat.satrec, pairReferenceTime);
-        if (!snapshot) return null;
-        return {
-          noradId: sat.details.NORAD_CAT_ID,
-          objectName: sat.details?.OBJECT_NAME || sat.details?.NORAD_CAT_ID,
-          type: sat.type,
-          isSynthetic: Boolean(sat.details?.is_synthetic),
-          isFragment: fragmentIds.has(String(sat.details.NORAD_CAT_ID)),
-          position: snapshot.position,
-          distanceKm: distanceBetweenPositionsKm(snapshot.position, midpoint),
-        };
-      })
-      .filter(Boolean)
-      .filter((item) => item.isFragment || item.distanceKm <= COLLISION_WAVE_THRESHOLD_KM)
-      .sort((left, right) => {
-        if (left.isFragment !== right.isFragment) {
-          return left.isFragment ? -1 : 1;
-        }
-        return left.distanceKm - right.distanceKm;
-      })
-      .slice(0, 32);
-
-    const primaryImpacts = nearbyObjects
-      .filter((item) => item.isFragment || item.distanceKm <= IMPACT_PROXIMITY_THRESHOLD_KM)
-      .slice(0, 14);
-
-    const cascadeSources = primaryImpacts.filter((item) => !item.isFragment).slice(0, 3);
-    const cascadeTargets = nearbyObjects.filter(
-      (item) =>
-        !primaryImpacts.some((primary) => primary.noradId === item.noradId) &&
-        !item.isSynthetic &&
-        !item.isFragment
-    );
-
-    const cascadeLinks = cascadeSources
-      .map((source) => {
-        const nextTarget = cascadeTargets
-          .map((candidate) => ({
-            candidate,
-            distanceKm: distanceBetweenPositionsKm(candidate.position, source.position),
-          }))
-          .sort((left, right) => left.distanceKm - right.distanceKm)[0];
-
-        if (!nextTarget) return null;
-        return {
-          from: source,
-          to: nextTarget.candidate,
-        };
-      })
-      .filter(Boolean);
-
-    return {
-      midpoint,
-      targetStart: targetStartSnapshot?.position || targetSnapshot.position,
-      candidateStart: comparedStartSnapshot?.position || comparedSnapshot.position,
-      primaryImpacts,
-      cascadeLinks,
-      affectedCount: primaryImpacts.filter((item) => !item.isFragment && !item.isSynthetic).length,
-      fragmentCount: primaryImpacts.filter((item) => item.isFragment).length,
-    };
-  }, [allSatData, comparedSat, pairModeActive, pairReferenceTime, scenarioState, selectedSat]);
-  const collisionPlaybackActive = Boolean(
-    scenarioState?.kind === "collision" &&
-    scenarioState?.collisionStarted &&
-    collisionVisualization
-  );
 
   const orbitColor = selectedSat
     ? getObjectTypeColor(selectedSat.type)
@@ -1340,14 +1241,12 @@ export default function Globe({
     : "#00e5ff";
   const showSelectedOrbitPath = Boolean(
     selectedSat &&
-    showOrbitalPaths &&
-    !selectedSat.details?.is_synthetic
+    showOrbitalPaths
   );
   const showComparedOrbitPath = Boolean(
     pairModeActive &&
     comparedSat &&
-    showOrbitalPaths &&
-    !comparedSat.details?.is_synthetic
+    showOrbitalPaths
   );
 
   useEffect(() => {
@@ -1357,15 +1256,57 @@ export default function Globe({
   useEffect(() => {
     const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
     const controller = new AbortController();
+    const SESSION_CACHE_KEY = "kesslerx:sat_cache";
+    const SESSION_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 
+    function buildRecords(rawData) {
+      return rawData
+        .filter((sat) => sat?.TLE_LINE1 && sat?.TLE_LINE2)
+        .map((sat) => {
+          const type = normalizeObjectType(sat.OBJECT_TYPE);
+          return {
+            satrec: twoline2satrec(sat.TLE_LINE1, sat.TLE_LINE2),
+            color: new THREE.Color(
+              getObjectTypeColor(type)
+            ),
+            type,
+            details: sat,
+          };
+        })
+        .filter((record) => record.satrec);
+    }
+
+    // --- Instant load from sessionStorage cache ---
+    try {
+      const cached = sessionStorage.getItem(SESSION_CACHE_KEY);
+      if (cached) {
+        const { data: cachedData, timestamp } = JSON.parse(cached);
+        const age = Date.now() - timestamp;
+        if (Array.isArray(cachedData) && cachedData.length > 0 && age < SESSION_CACHE_MAX_AGE_MS) {
+          const cachedRecords = buildRecords(cachedData);
+          if (cachedRecords.length > 0) {
+            setAllSatData(cachedRecords);
+            setDatasetMeta({
+              status: "session_cache",
+              cached: true,
+              cacheAgeSeconds: Math.round(age / 1000),
+              generatedAt: new Date(timestamp).toISOString(),
+              fetchWindowOpen: null,
+              source: "session_cache",
+              error: null,
+            });
+          }
+        }
+      }
+    } catch {
+      // sessionStorage unavailable — continue to API fetch
+    }
+
+    // --- Background fetch from API (always runs to keep data fresh) ---
     async function loadSatellites() {
       try {
-        const response = await fetch(`${apiBaseUrl}/satellites?t=${Date.now()}`, {
+        const response = await fetch(`${apiBaseUrl}/satellites`, {
           signal: controller.signal,
-          headers: {
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache"
-          }
         });
 
         if (!response.ok) {
@@ -1374,20 +1315,7 @@ export default function Globe({
 
         const payload = await response.json();
         const records = Array.isArray(payload.data)
-          ? payload.data
-            .filter((sat) => sat?.TLE_LINE1 && sat?.TLE_LINE2)
-            .map((sat) => {
-              const type = normalizeObjectType(sat.OBJECT_TYPE);
-              return {
-                satrec: twoline2satrec(sat.TLE_LINE1, sat.TLE_LINE2),
-                color: new THREE.Color(
-                  sat.is_synthetic ? SYNTHETIC_MARKER_COLOR : getObjectTypeColor(type)
-                ),
-                type,
-                details: sat,
-              };
-            })
-            .filter((record) => record.satrec)
+          ? buildRecords(payload.data)
           : [];
 
         setAllSatData(records);
@@ -1400,19 +1328,36 @@ export default function Globe({
           source: payload.source ?? "unknown",
           error: null,
         });
+
+        // Persist to sessionStorage for instant load next time
+        try {
+          if (Array.isArray(payload.data) && payload.data.length > 0) {
+            sessionStorage.setItem(
+              SESSION_CACHE_KEY,
+              JSON.stringify({ data: payload.data, timestamp: Date.now() })
+            );
+          }
+        } catch {
+          // quota exceeded or unavailable — non-critical
+        }
       } catch (error) {
         if (controller.signal.aborted) return;
 
-        setAllSatData([]);
-        setDatasetMeta({
-          status: "error",
-          cached: false,
-          cacheAgeSeconds: null,
-          generatedAt: null,
-          fetchWindowOpen: null,
-          source: "unknown",
-          error: error instanceof Error ? error.message : "Unknown fetch error",
-        });
+        // Only clear data if we had nothing from cache
+        setAllSatData((prev) => (prev.length > 0 ? prev : []));
+        setDatasetMeta((prev) =>
+          prev.status === "session_cache"
+            ? prev
+            : {
+                status: "error",
+                cached: false,
+                cacheAgeSeconds: null,
+                generatedAt: null,
+                fetchWindowOpen: null,
+                source: "unknown",
+                error: error instanceof Error ? error.message : "Unknown fetch error",
+              }
+        );
       }
     }
 
@@ -1461,6 +1406,9 @@ export default function Globe({
       if (cancelled) return;
       const localAnalysis = buildTargetAnalysis(selectedSat, allSatData, windowStartDate);
       const localTimelineEvents = buildTargetTimelineEvents(selectedSat, allSatData, windowStartDate);
+      const localPairTimelineEvents = comparedSat
+        ? buildPairTimelineEvents(selectedSat, comparedSat, windowStartDate)
+        : [];
       if (cancelled || requestId !== analysisRequestIdRef.current) return;
       setAnalysisSnapshot(
         localAnalysis
@@ -1468,6 +1416,7 @@ export default function Globe({
             ...localAnalysis,
             targetNoradId: selectedNoradId,
             timelineEvents: localTimelineEvents,
+            pairTimelineEvents: localPairTimelineEvents,
           }
           : null
       );
@@ -1488,7 +1437,7 @@ export default function Globe({
         clearTimeout(handle);
       }
     };
-  }, [allSatData, selectedNoradId, selectedSat, windowStartDate]);
+  }, [allSatData, comparedSat, selectedNoradId, selectedSat, windowStartDate]);
 
   useEffect(() => {
     if (!selectionClearSignal) return;
@@ -1603,6 +1552,7 @@ export default function Globe({
 
         {showSelectedOrbitPath && (
           <OrbitPath
+            key={`orbit-selected-${selectedSat.details.NORAD_CAT_ID}`}
             satrec={selectedSat.satrec}
             color={orbitColor}
             pastColor={orbitColor}
@@ -1610,10 +1560,13 @@ export default function Globe({
             opacity={0.6}
             referenceTime={simulatedDate}
             simTimeRef={simTimeRef}
+            simBaseTimeMs={simBaseTimeMs}
+            showFuture={showFuturePaths}
           />
         )}
         {showComparedOrbitPath && (
           <OrbitPath
+            key={`orbit-compared-${comparedSat.details.NORAD_CAT_ID}`}
             satrec={comparedSat.satrec}
             color={comparedOrbitColor}
             pastColor={comparedOrbitColor}
@@ -1621,9 +1574,11 @@ export default function Globe({
             opacity={0.52}
             referenceTime={simulatedDate}
             simTimeRef={simTimeRef}
+            simBaseTimeMs={simBaseTimeMs}
+            showFuture={showFuturePaths}
           />
         )}
-        {selectedSat && !collisionPlaybackActive && (
+        {selectedSat && (
           <SelectedSatelliteMarker
             key={`selected-${selectedSat.details.NORAD_CAT_ID}`}
             sat={selectedSat}
@@ -1631,11 +1586,11 @@ export default function Globe({
             simOffsetHours={simOffsetHours}
             simTimeRef={simTimeRef}
             simBaseTimeMs={simBaseTimeMs}
-            color={selectedSat.details?.is_synthetic ? SYNTHETIC_MARKER_COLOR : "#f5c842"}
-            useExactPosition={Boolean(selectedSat.details?.is_synthetic)}
+            color="#f5c842"
+            useExactPosition={false}
           />
         )}
-        {selectedSat && comparedSat && !collisionPlaybackActive ? (
+        {selectedSat && comparedSat ? (
           <SelectedSatelliteMarker
             key={`compared-${comparedSat.details.NORAD_CAT_ID}`}
             sat={comparedSat}
@@ -1643,29 +1598,23 @@ export default function Globe({
             simOffsetHours={simOffsetHours}
             simTimeRef={simTimeRef}
             simBaseTimeMs={simBaseTimeMs}
-            color={comparedSat.details?.is_synthetic ? SYNTHETIC_MARKER_COLOR : "#00e5ff"}
+            color="#00e5ff"
             markerRadius={0.017}
             haloInnerRadius={0.036}
             haloOuterRadius={0.05}
             haloOpacity={0.58}
-            useExactPosition={Boolean(comparedSat.details?.is_synthetic)}
+            useExactPosition={false}
           />
         ) : null}
-        {pairModeActive && !collisionPlaybackActive ? (
+        {pairModeActive ? (
           <PairLink
             key={`pair-link-${selectedSat?.details?.NORAD_CAT_ID ?? "none"}-${comparedSat?.details?.NORAD_CAT_ID ?? "none"}`}
             leftSat={selectedSat}
             rightSat={comparedSat}
-            simOffsetHours={simOffsetHours}
             simProgressRef={simProgressRef}
+            simOffsetHours={simOffsetHours}
             simTimeRef={simTimeRef}
             simBaseTimeMs={simBaseTimeMs}
-          />
-        ) : null}
-        {collisionPlaybackActive ? (
-          <CollisionSimulationOverlay
-            data={collisionVisualization}
-            startedAt={scenarioState.collisionStartedAt || Date.now()}
           />
         ) : null}
 

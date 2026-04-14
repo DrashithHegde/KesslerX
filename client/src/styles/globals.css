@@ -1039,3 +1039,15 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border-color: rgba(255, 59, 59, 0.7);
   box-shadow: 0 0 12px rgba(255, 59, 59, 0.15);
 }
+
+/* ── Timeline event marker pulse (collision events) ──────────────────────── */
+@keyframes eventMarkerPulse {
+  0%, 100% {
+    box-shadow: 0 0 6px currentColor, 0 0 2px currentColor;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    box-shadow: 0 0 18px currentColor, 0 0 8px currentColor;
+    transform: translate(-50%, -50%) scale(1.35);
+  }
+}

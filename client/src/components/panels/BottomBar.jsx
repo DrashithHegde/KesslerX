@@ -3,6 +3,7 @@ import {
   SIM_WINDOW_HOURS,
   TIMELINE_DURATION_MS,
 } from "../../utils/simulationClock";
+
 const SPEED_OPTIONS = [
   { label: "1x", speed: 0.5 },
   { label: "2x", speed: 1 },
@@ -11,12 +12,47 @@ const SPEED_OPTIONS = [
 
 function eventMarkerColor(event) {
   if (event?.is_confirmed_collision || event?.event_class === "collision") return "#ff5f57";
-  if (event?.event_class === "super_close_call") return "#ff8c42";
-  if (event?.event_class === "close_approach") return "#ffd166";
   if (event?.risk_band === "SEVERE") return "#ff5f57";
   if (event?.risk_band === "HIGH") return "#ff8c42";
   if (event?.risk_band === "ELEVATED") return "#ffd166";
+  if (event?.event_class === "super_close_call") return "#ff8c42";
+  if (event?.event_class === "close_approach") return "#ffd166";
   return "#00e5ff";
+}
+
+function isCollisionEvent(event) {
+  return Boolean(
+    event?.is_confirmed_collision || event?.event_class === "collision"
+  );
+}
+
+function deriveTimelineEventClass(event) {
+  const explicitClass = event?.event_class ?? event?.eventClass ?? null;
+  const minSeparationKm = Number(
+    event?.min_separation_km
+      ?? event?.minSeparationKm
+      ?? event?.closest_distance_km
+      ?? event?.closestDistanceKm
+  );
+
+  if (event?.is_confirmed_collision || event?.isConfirmedCollision || explicitClass === "collision") {
+    return "collision";
+  }
+  if (explicitClass === "super_close_call" || explicitClass === "close_approach") {
+    return explicitClass;
+  }
+  if (Number.isFinite(minSeparationKm)) {
+    if (minSeparationKm <= 20) return "super_close_call";
+    if (minSeparationKm <= 80) return "close_approach";
+  }
+  return null;
+}
+
+function timelineEventLabel(eventClass, fallbackLabel) {
+  if (eventClass === "collision") return "COLLISION";
+  if (eventClass === "super_close_call") return "SUPER CLOSE CALL";
+  if (eventClass === "close_approach") return "CLOSE APPROACH";
+  return fallbackLabel ?? "TRACKED EVENT";
 }
 
 function formatSimTime(progress) {
@@ -24,6 +60,12 @@ function formatSimTime(progress) {
   const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
   const minutes = String(totalMinutes % 60).padStart(2, "0");
   return `${hours}:${minutes}`;
+}
+
+function formatTimelineMinute(minute) {
+  const numericMinute = Number(minute);
+  if (!Number.isFinite(numericMinute)) return null;
+  return formatSimTime(numericMinute / (SIM_WINDOW_HOURS * 60));
 }
 
 function eventTimelineMinute(event) {
@@ -44,6 +86,13 @@ function eventMarkerTitle(event) {
     : Number.NaN;
   const timestamp = Number.isFinite(timePosition) ? `T+${formatSimTime(timePosition)}` : null;
   return [summary, counterpart, timestamp].filter(Boolean).join(" // ");
+}
+
+function formatDistance(km) {
+  if (km === null || km === undefined || !Number.isFinite(Number(km))) return "";
+  const numKm = Number(km);
+  if (numKm < 1) return `${Math.round(numKm * 1000)} m`;
+  return `${numKm} km`;
 }
 
 function CompactChip({
@@ -109,33 +158,122 @@ function CompactChip({
   );
 }
 
-function SweepTimeline({ progress, onSeek, markers = [] }) {
+function SweepTimeline({ progress, onSeek, markers = [], onMarkerClick, showTimestampAnnotations = false }) {
   const trackRef = useRef(null);
+  const [hoveredMarker, setHoveredMarker] = useState(null);
+  const [scrubLocked, setScrubLocked] = useState(false);
+  const timelineTopInset = 2;
 
-  const handleClick = (event) => {
+  const seekFromClientX = (clientX) => {
     if (!trackRef.current || typeof onSeek !== "function") return;
     const rect = trackRef.current.getBoundingClientRect();
-    const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
     onSeek(ratio);
   };
 
+  useEffect(() => {
+    if (!scrubLocked || typeof window === "undefined") return undefined;
+
+    const handlePointerMove = (event) => {
+      seekFromClientX(event.clientX);
+    };
+    const handlePointerDown = (event) => {
+      if (trackRef.current?.contains(event.target)) return;
+      setScrubLocked(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setScrubLocked(false);
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [scrubLocked]);
+
+  const handleTrackClick = (event) => {
+    if (typeof onSeek !== "function") return;
+    seekFromClientX(event.clientX);
+    setScrubLocked((current) => !current);
+  };
+
   return (
-    <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+    <div
+      style={{
+        position: "relative",
+        flex: 1,
+        minWidth: 180,
+        paddingTop: timelineTopInset,
+      }}
+    >
+      {showTimestampAnnotations ? (
+        <div
+          style={{
+            position: "absolute",
+            insetInline: 0,
+            top: 0,
+            height: 10,
+            display: "flex",
+            justifyContent: "space-between",
+            pointerEvents: "none",
+          }}
+        >
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div
+              key={`tick-${i}`}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                width: 0,
+                overflow: "visible",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "0.38rem",
+                  color: "rgba(0,229,255,0.26)",
+                  fontFamily: "'DM Mono', monospace",
+                  marginBottom: 1,
+                }}
+              >
+                T+{i}:00
+              </span>
+              <div
+                style={{
+                  width: 1,
+                  height: 3,
+                  background: "rgba(0,229,255,0.1)",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <div
         ref={trackRef}
-        onClick={handleClick}
+        onClick={handleTrackClick}
         style={{
           position: "relative",
           height: 4,
+          transform: "translateY(-4px)",
           borderRadius: 999,
           background:
             "linear-gradient(180deg, rgba(0,229,255,0.07), rgba(0,229,255,0.03))",
           border: "1px solid rgba(0,229,255,0.12)",
           boxShadow: "inset 0 0 18px rgba(0,229,255,0.05)",
-          cursor: "pointer",
+          cursor: scrubLocked ? "ew-resize" : "pointer",
           overflow: "visible",
         }}
       >
+        {/* Progress fill */}
         <div
           style={{
             position: "absolute",
@@ -150,26 +288,138 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
           }}
         />
 
-        {markers.map((marker, index) => (
-          <span key={`${marker.position}-${marker.color}-${index}`}>
-            <span
-              style={{
-                position: "absolute",
-                left: `${marker.position * 100}%`,
-                top: "50%",
-                transform: "translate(-50%, -50%)",
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: marker.color,
-                boxShadow: `0 0 12px ${marker.color}`,
-                border: "1px solid rgba(4,7,11,0.9)",
-              }}
-              title={marker.title || undefined}
-            />
-          </span>
-        ))}
+        {/* Event markers — clickable dots with vertical ticks */}
+        {markers.map((marker, index) => {
+          const isCollision = marker.isCollision;
+          const isHovered = hoveredMarker === index;
+          const markerSize = isCollision ? 8 : 6;
+          const hoverScale = isHovered ? 1.6 : 1;
 
+          return (
+            <span
+              key={`${marker.position}-${marker.color}-${index}`}
+              style={{ position: "absolute", left: `${marker.position * 100}%`, top: "50%", zIndex: isHovered ? 20 : 10 }}
+            >
+              {/* Vertical tick line */}
+              <span
+                style={{
+                  position: "absolute",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  top: -3,
+                  width: 1,
+                  height: 10,
+                  background: `linear-gradient(180deg, ${marker.color}88, ${marker.color}22)`,
+                  pointerEvents: "none",
+                }}
+              />
+
+              {/* Clickable dot */}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onMarkerClick?.(marker, index);
+                }}
+                onMouseEnter={() => setHoveredMarker(index)}
+                onMouseLeave={() => setHoveredMarker(null)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onMarkerClick?.(marker, index);
+                  }
+                }}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  transform: `translate(-50%, -50%) scale(${hoverScale})`,
+                  width: markerSize,
+                  height: markerSize,
+                  borderRadius: isCollision ? 2 : "50%",
+                  background: marker.color,
+                  boxShadow: isCollision
+                    ? `0 0 16px ${marker.color}, 0 0 6px ${marker.color}`
+                    : `0 0 12px ${marker.color}`,
+                  border: "1px solid rgba(4,7,11,0.9)",
+                  cursor: "pointer",
+                  transition: "transform 0.15s ease, box-shadow 0.15s ease",
+                  animation: isCollision ? "eventMarkerPulse 2s ease-in-out infinite" : "none",
+                }}
+                title={marker.title || undefined}
+              />
+
+              {/* Hover tooltip */}
+              {isHovered && (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    bottom: 18,
+                    transform: "translateX(-50%)",
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    background: "rgba(8,12,18,0.95)",
+                    border: `1px solid ${marker.color}44`,
+                    boxShadow: `0 4px 16px rgba(0,0,0,0.5), 0 0 8px ${marker.color}22`,
+                    whiteSpace: "nowrap",
+                    pointerEvents: "none",
+                    zIndex: 30,
+                    display: "grid",
+                    gap: 3,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "0.5rem",
+                      letterSpacing: "0.14em",
+                      textTransform: "uppercase",
+                      color: marker.color,
+                      fontFamily: "'DM Mono', monospace",
+                    }}
+                  >
+                    {marker.eventLabel || "Event"}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "0.54rem",
+                      color: "rgba(200,214,229,0.82)",
+                      fontFamily: "'DM Mono', monospace",
+                    }}
+                  >
+                    {marker.counterpartName || ""}
+                  </span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <span
+                      style={{
+                        fontSize: "0.48rem",
+                        color: "rgba(200,214,229,0.5)",
+                        fontFamily: "'DM Mono', monospace",
+                      }}
+                    >
+                      T+{marker.timeLabel || "--:--"}
+                    </span>
+                    {marker.distance && (
+                      <span
+                        style={{
+                          fontSize: "0.48rem",
+                          color: "rgba(200,214,229,0.5)",
+                          fontFamily: "'DM Mono', monospace",
+                        }}
+                      >
+                        {marker.distance}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </span>
+          );
+        })}
+
+        {/* Playhead */}
         <div
           style={{
             position: "absolute",
@@ -182,6 +432,7 @@ function SweepTimeline({ progress, onSeek, markers = [] }) {
             background: "radial-gradient(circle at 35% 35%, #8ef7ff 0%, #00cfe8 45%, #081118 100%)",
             border: "1px solid rgba(190,252,255,0.78)",
             boxShadow: "0 0 18px rgba(0,229,255,0.36)",
+            zIndex: 15,
           }}
         />
       </div>
@@ -203,6 +454,7 @@ export default function BottomBar({
   focusMode = false,
   onToggleFocusMode,
   timelineEvents = [],
+  onJumpToEvent,
 }) {
   const [timelineProgress, setTimelineProgress] = useState(0);
   const rafRef = useRef(null);
@@ -306,27 +558,42 @@ export default function BottomBar({
     syncProgress(0, { forceSync: true });
     onSimReset();
   };
-  const scenarioTimelineMarkers = Array.isArray(timelineEvents)
-    ? timelineEvents
-      .map((event, index) => {
-        const timelineMinute = eventTimelineMinute(event);
-        if (timelineMinute === null) {
-          return null;
-        }
 
+  const simTimelineMarkers = Array.isArray(timelineEvents)
+    ? timelineEvents
+      .map((event) => {
+        const minute = eventTimelineMinute(event);
+        if (minute === null) return null;
         return {
-          position: Math.min(Math.max(timelineMinute / (SIM_WINDOW_HOURS * 60), 0), 1),
+          position: minute / (SIM_WINDOW_HOURS * 60),
+          label: timelineEventLabel(deriveTimelineEventClass(event), event?.event_label),
+          timeLabel: formatTimelineMinute(minute),
           color: eventMarkerColor(event),
-          label: formatSimTime(timelineMinute / (SIM_WINDOW_HOURS * 60)),
-          title: eventMarkerTitle(event) || `Event ${index + 1}`,
+          isCollision: isCollisionEvent(event),
+          distance: formatDistance(event?.min_separation_km),
+          counterpartName: event?.candidate_name || event?.target_name || "",
+          event, // pass original event for jump handler
         };
       })
       .filter(Boolean)
       .sort((left, right) => left.position - right.position)
     : [];
-  const nextMarker = scenarioTimelineMarkers.find(
-    (marker) => marker.position >= timelineProgress
-  ) || scenarioTimelineMarkers[scenarioTimelineMarkers.length - 1] || null;
+
+  const handleMarkerClick = (marker) => {
+    if (!marker?.event || typeof onJumpToEvent !== "function") {
+      // Fallback: just seek to position
+      handleSeek(marker.position);
+      return;
+    }
+    // Jump timeline and trigger event focus
+    const ratio = marker.position;
+    if (ratio < 1) {
+      hasCompletedRef.current = false;
+    }
+    anchorProgressRef.current = ratio;
+    syncProgress(ratio, { forceSync: true });
+    onJumpToEvent(marker.event);
+  };
 
   return (
     <div
@@ -334,11 +601,11 @@ export default function BottomBar({
         pointerEvents: "none",
         position: "fixed",
         insetInline: 0,
-        bottom: 0,
+        bottom: 26,
         zIndex: 30,
         display: "flex",
         justifyContent: "center",
-        padding: "0 18px 34px",
+        padding: "0 18px 0",
       }}
     >
       <div
@@ -348,7 +615,7 @@ export default function BottomBar({
           width: "760px",
           maxWidth: "100%",
           borderRadius: 14,
-          padding: "8px 12px",
+          padding: "12px 12px 10px",
           border: "1px solid rgba(0,229,255,0.13)",
           boxShadow: "0 14px 34px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.02)",
           background:
@@ -359,8 +626,8 @@ export default function BottomBar({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 10,
-            minHeight: 28,
+            gap: 8,
+            minHeight: 36,
           }}
         >
           <button
@@ -387,7 +654,7 @@ export default function BottomBar({
           <div
             style={{
               minWidth: 118,
-              padding: "2px 4px",
+              padding: "0 4px",
               borderRadius: 0,
               border: "none",
               background: "transparent",
@@ -400,7 +667,7 @@ export default function BottomBar({
               textAlign: "center",
             }}
           >
-            {simRunning ? "Playback live" : "Scenario standby"}
+            {simRunning ? "Playback live" : "Simulation standby"}
           </div>
 
           <div
@@ -408,8 +675,8 @@ export default function BottomBar({
               flex: 1,
               minWidth: 180,
               display: "grid",
-              gap: 4,
-              padding: "2px 2px 4px",
+              gap: 2,
+              padding: "0 2px 0",
               borderRadius: 0,
               border: "none",
               background: "transparent",
@@ -421,19 +688,24 @@ export default function BottomBar({
                 alignItems: "center",
                 justifyContent: "flex-end",
                 gap: 10,
+                transform: "translateY(-8px)",
                 fontSize: "0.44rem",
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
               }}
             >
               <span style={{ color: "rgba(255,209,102,0.72)" }}>
-                {nextMarker?.label ? `Next ${nextMarker.label}` : `${scenarioTimelineMarkers.length} events`}
+                {simTimelineMarkers.length > 0
+                  ? `${simTimelineMarkers.length} tracked approaches`
+                  : "No pair events"}
               </span>
             </div>
             <SweepTimeline
               progress={timelineProgress}
               onSeek={handleSeek}
-              markers={scenarioTimelineMarkers}
+              markers={simTimelineMarkers}
+              onMarkerClick={handleMarkerClick}
+              showTimestampAnnotations={simTimelineMarkers.length > 0}
             />
           </div>
 
@@ -458,13 +730,13 @@ export default function BottomBar({
 
         <div
           style={{
-            marginTop: 5,
+            marginTop: 6,
             paddingTop: 6,
             borderTop: "1px solid rgba(0,229,255,0.08)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 10,
+            gap: 8,
             flexWrap: "nowrap",
           }}
         >
@@ -520,7 +792,7 @@ export default function BottomBar({
               onClick={onToggleFocusMode}
               active={focusMode}
             />
-            <CompactChip label="Reset" onClick={handleReset} disabled={simActionPending} />
+            <CompactChip label="Reset" onClick={handleReset} />
           </div>
         </div>
       </div>

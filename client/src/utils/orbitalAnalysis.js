@@ -47,7 +47,7 @@ function describeObjectType(type) {
 }
 
 export function getObjectTypeColor(type) {
-  if (type === "PAYLOAD") return "#6395EE";
+  if (type === "PAYLOAD") return "#00e5ff";
   if (type === "ROCKET BODY") return "#00FF7A";
   if (type === "DEBRIS") return "#b08a6b";
   return "#94a3b8";
@@ -257,6 +257,105 @@ function classifyTimelineEvent(minSeparationKm, syntheticEventClass = null) {
   return null;
 }
 
+function buildTimelineEventCandidates({
+  target,
+  candidate,
+  targetSamples,
+  screeningTimes,
+  startDate,
+}) {
+  const separations = [];
+  let bestSample = null;
+
+  for (let index = 0; index < screeningTimes.length; index += 1) {
+    const targetState = targetSamples[index];
+    const candidateState = getPropagationSnapshot(
+      candidate.target.satrec,
+      new Date(startDate.getTime() + screeningTimes[index] * 60 * 1000)
+    );
+    if (!targetState || !candidateState) {
+      separations.push(null);
+      continue;
+    }
+
+    const separationKm = round(distanceKm(targetState.position, candidateState.position), 1);
+    separations.push(separationKm);
+
+    if (!bestSample || separationKm < bestSample.minSeparationKm) {
+      bestSample = {
+        minute: screeningTimes[index],
+        minSeparationKm: separationKm,
+      };
+    }
+  }
+
+  const coarseEvents = [];
+  for (let index = 0; index < separations.length; index += 1) {
+    const current = separations[index];
+    if (!Number.isFinite(current) || current > CLOSE_APPROACH_THRESHOLD_KM) continue;
+
+    const previous = index > 0 ? separations[index - 1] : Number.POSITIVE_INFINITY;
+    const next = index < separations.length - 1 ? separations[index + 1] : Number.POSITIVE_INFINITY;
+    const isLocalMinimum =
+      (!Number.isFinite(previous) || current <= previous) &&
+      (!Number.isFinite(next) || current <= next);
+
+    if (!isLocalMinimum) continue;
+
+    coarseEvents.push({
+      minute: screeningTimes[index],
+      minSeparationKm: current,
+    });
+  }
+
+  if (coarseEvents.length === 0 && bestSample && bestSample.minSeparationKm <= CLOSE_APPROACH_THRESHOLD_KM) {
+    coarseEvents.push(bestSample);
+  }
+
+  return coarseEvents
+    .map((event) => {
+      const refinedMinute = refineClosestApproachMinute(
+        target.satrec,
+        candidate.target.satrec,
+        startDate,
+        event.minute
+      );
+      if (!Number.isFinite(refinedMinute)) return null;
+
+      const refinedSampleTime = new Date(startDate.getTime() + refinedMinute * 60 * 1000);
+      const refinedTargetState = getPropagationSnapshot(target.satrec, refinedSampleTime);
+      const refinedCandidateState = getPropagationSnapshot(candidate.target.satrec, refinedSampleTime);
+      if (!refinedTargetState || !refinedCandidateState) return null;
+
+      return {
+        minute: refinedMinute,
+        minSeparationKm: round(
+          distanceKm(refinedTargetState.position, refinedCandidateState.position),
+          1
+        ),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.minute - right.minute)
+    .reduce((deduped, event) => {
+      const previous = deduped[deduped.length - 1];
+      if (!previous) {
+        deduped.push(event);
+        return deduped;
+      }
+
+      if (Math.abs(previous.minute - event.minute) <= 2) {
+        if (event.minSeparationKm < previous.minSeparationKm) {
+          deduped[deduped.length - 1] = event;
+        }
+        return deduped;
+      }
+
+      deduped.push(event);
+      return deduped;
+    }, []);
+}
+
 function timelineEventLabel(eventClass) {
   if (eventClass === "collision") return "COLLISION";
   if (eventClass === "super_close_call") return "SUPER CLOSE CALL";
@@ -297,6 +396,8 @@ function syntheticPairEvent(target, candidate) {
 
   return null;
 }
+
+
 
 function buildRiskDrivers({
   target,
@@ -657,101 +758,109 @@ export function buildTargetTimelineEvents(target, records, windowStartDate = new
   const events = [];
 
   for (const candidate of shortlist) {
-    let candidateBest = null;
+    const syntheticEvent = syntheticPairEvent(target, candidate.target);
+    const detectedEvents = buildTimelineEventCandidates({
+      target,
+      candidate,
+      targetSamples,
+      screeningTimes,
+      startDate,
+    });
+    const candidateEvents = [...detectedEvents];
 
-    for (let index = 0; index < screeningTimes.length; index += 1) {
-      const targetState = targetSamples[index];
-      const candidateState = getPropagationSnapshot(
-        candidate.target.satrec,
-        new Date(startDate.getTime() + screeningTimes[index] * 60 * 1000)
-      );
-      if (!targetState || !candidateState) continue;
-
-      const separationKm = round(distanceKm(targetState.position, candidateState.position), 1);
-      if (!candidateBest || separationKm < candidateBest.minSeparationKm) {
-        candidateBest = {
-          objectName: candidate.target.details.OBJECT_NAME || "UNKNOWN OBJECT",
-          objectType: candidate.target.type,
-          noradId: candidate.target.details.NORAD_CAT_ID,
-          minSeparationKm: separationKm,
-          sampledTcaMinutes: screeningTimes[index],
-          altitudeDeltaKm: candidate.altitudeDeltaKm,
-        };
-      }
+    if (
+      syntheticEvent?.eventClass &&
+      Number.isFinite(syntheticEvent?.eventTimeMinutes) &&
+      syntheticEvent.eventTimeMinutes >= 0 &&
+      syntheticEvent.eventTimeMinutes <= TIMELINE_WINDOW_MINUTES
+    ) {
+      candidateEvents.push({
+        minute: syntheticEvent.eventTimeMinutes,
+        minSeparationKm:
+          syntheticEvent.eventClass === "collision"
+            ? 0
+            : syntheticEvent.eventClass === "super_close_call"
+              ? SUPER_CLOSE_CALL_THRESHOLD_KM
+              : CLOSE_APPROACH_THRESHOLD_KM,
+        syntheticEventClass: syntheticEvent.eventClass,
+      });
     }
 
-    if (!candidateBest) continue;
+    const mergedCandidateEvents = candidateEvents
+      .sort((left, right) => left.minute - right.minute)
+      .reduce((deduped, event) => {
+        const previous = deduped[deduped.length - 1];
+        if (!previous) {
+          deduped.push(event);
+          return deduped;
+        }
 
-    candidateBest.sampledTcaMinutes = refineClosestApproachMinute(
-      target.satrec,
-      candidate.target.satrec,
-      startDate,
-      candidateBest.sampledTcaMinutes
-    );
-    const refinedSampleTime = new Date(
-      startDate.getTime() + candidateBest.sampledTcaMinutes * 60 * 1000
-    );
-    const refinedTargetState = getPropagationSnapshot(target.satrec, refinedSampleTime);
-    const refinedCandidateState = getPropagationSnapshot(candidate.target.satrec, refinedSampleTime);
-    if (refinedTargetState && refinedCandidateState) {
-      candidateBest.minSeparationKm = round(
-        distanceKm(refinedTargetState.position, refinedCandidateState.position),
+        if (Math.abs(previous.minute - event.minute) <= 2) {
+          if (event.syntheticEventClass && !previous.syntheticEventClass) {
+            deduped[deduped.length - 1] = event;
+            return deduped;
+          }
+          if (!previous.syntheticEventClass && event.minSeparationKm < previous.minSeparationKm) {
+            deduped[deduped.length - 1] = event;
+          }
+          return deduped;
+        }
+
+        deduped.push(event);
+        return deduped;
+      }, []);
+
+    for (const candidateEvent of mergedCandidateEvents) {
+      const eventClass = classifyTimelineEvent(
+        candidateEvent.minSeparationKm,
+        candidateEvent.syntheticEventClass ?? null
+      );
+      if (!eventClass) continue;
+
+      const timelineMinute = candidateEvent.minute;
+      if (!Number.isFinite(timelineMinute)) continue;
+
+      const adjustedMinSeparationKm =
+        eventClass === "collision"
+          ? 0
+          : eventClass === "super_close_call"
+            ? Math.min(candidateEvent.minSeparationKm, 8)
+            : Math.min(candidateEvent.minSeparationKm, 35);
+      const pairRiskScore = buildPairRiskScore({
+        target,
+        candidateType: candidate.target.type,
+        minSeparationKm: adjustedMinSeparationKm,
+        sampledTcaMinutes: timelineMinute,
+        altitudeDeltaKm: candidate.altitudeDeltaKm,
+      });
+      const riskScore = round(
+        eventClass === "collision"
+          ? 100
+          : eventClass === "super_close_call"
+            ? Math.max(pairRiskScore, 92)
+            : Math.max(pairRiskScore, 76),
         1
       );
+
+      events.push({
+        targetNoradId: target.details.NORAD_CAT_ID,
+        targetName: target.details.OBJECT_NAME,
+        targetType: target.type,
+        candidateNoradId: candidate.target.details.NORAD_CAT_ID,
+        candidateName: candidate.target.details.OBJECT_NAME || "UNKNOWN OBJECT",
+        candidateType: candidate.target.type,
+        minSeparationKm: round(adjustedMinSeparationKm, 1),
+        sampledTcaMinutes: timelineMinute,
+        eventTimeMinutes: timelineMinute,
+        timelineMinute,
+        riskScore,
+        riskBand: timelineEventBand(eventClass, riskScore),
+        riskColor: timelineEventColor(eventClass, riskScore),
+        eventClass,
+        eventLabel: timelineEventLabel(eventClass),
+        isConfirmedCollision: eventClass === "collision",
+      });
     }
-
-    const syntheticEvent = syntheticPairEvent(target, candidate.target);
-    const eventClass = classifyTimelineEvent(
-      candidateBest.minSeparationKm,
-      syntheticEvent?.eventClass ?? null
-    );
-    if (!eventClass) continue;
-
-    const timelineMinute = Number.isFinite(syntheticEvent?.eventTimeMinutes)
-      ? syntheticEvent.eventTimeMinutes
-      : candidateBest.sampledTcaMinutes;
-    if (!Number.isFinite(timelineMinute)) continue;
-
-    const adjustedMinSeparationKm =
-      eventClass === "collision"
-        ? 0
-        : eventClass === "super_close_call"
-          ? Math.min(candidateBest.minSeparationKm, 8)
-          : Math.min(candidateBest.minSeparationKm, 35);
-    const pairRiskScore = buildPairRiskScore({
-      target,
-      candidateType: candidate.target.type,
-      minSeparationKm: adjustedMinSeparationKm,
-      sampledTcaMinutes: timelineMinute,
-      altitudeDeltaKm: candidate.altitudeDeltaKm,
-    });
-    const riskScore = round(
-      eventClass === "collision"
-        ? 100
-        : eventClass === "super_close_call"
-          ? Math.max(pairRiskScore, 92)
-          : Math.max(pairRiskScore, 76),
-      1
-    );
-
-    events.push({
-      targetNoradId: target.details.NORAD_CAT_ID,
-      targetName: target.details.OBJECT_NAME,
-      targetType: target.type,
-      candidateNoradId: candidateBest.noradId,
-      candidateName: candidateBest.objectName,
-      candidateType: candidateBest.objectType,
-      minSeparationKm: round(adjustedMinSeparationKm, 1),
-      sampledTcaMinutes: candidateBest.sampledTcaMinutes,
-      eventTimeMinutes: timelineMinute,
-      timelineMinute,
-      riskScore,
-      riskBand: timelineEventBand(eventClass, riskScore),
-      riskColor: timelineEventColor(eventClass, riskScore),
-      eventClass,
-      eventLabel: timelineEventLabel(eventClass),
-      isConfirmedCollision: eventClass === "collision",
-    });
   }
 
   const severityRank = (eventClass) =>
@@ -768,5 +877,147 @@ export function buildTargetTimelineEvents(target, records, windowStartDate = new
       return left.timelineMinute - right.timelineMinute;
     })
     .slice(0, TIMELINE_EVENT_LIMIT)
+    .sort((left, right) => left.timelineMinute - right.timelineMinute);
+}
+
+export function buildPairTimelineEvents(target, candidate, windowStartDate = new Date()) {
+  if (!target?.satrec || !candidate?.satrec) return [];
+
+  const startDate = windowStartDate instanceof Date ? windowStartDate : new Date(windowStartDate);
+  if (Number.isNaN(startDate.getTime())) return [];
+
+  const targetStartState = getPropagationSnapshot(target.satrec, startDate);
+  const candidateStartState = getPropagationSnapshot(candidate.satrec, startDate);
+  if (!targetStartState || !candidateStartState) return [];
+
+  const candidateEntry = {
+    target: candidate,
+    altitudeDeltaKm: round(Math.abs(candidateStartState.altitudeKm - targetStartState.altitudeKm), 1),
+  };
+
+  const screeningTimes = [];
+  const targetSamples = [];
+  for (let minute = 0; minute <= TIMELINE_WINDOW_MINUTES; minute += TIMELINE_STEP_MINUTES) {
+    const sampleTime = new Date(startDate.getTime() + minute * 60 * 1000);
+    screeningTimes.push(minute);
+    targetSamples.push(getPropagationSnapshot(target.satrec, sampleTime));
+  }
+
+  const syntheticEvent = syntheticPairEvent(target, candidate);
+  const detectedEvents = buildTimelineEventCandidates({
+    target,
+    candidate: candidateEntry,
+    targetSamples,
+    screeningTimes,
+    startDate,
+  });
+  const pairEvents = [...detectedEvents];
+
+  if (
+    syntheticEvent?.eventClass &&
+    Number.isFinite(syntheticEvent?.eventTimeMinutes) &&
+    syntheticEvent.eventTimeMinutes >= 0 &&
+    syntheticEvent.eventTimeMinutes <= TIMELINE_WINDOW_MINUTES
+  ) {
+    pairEvents.push({
+      minute: syntheticEvent.eventTimeMinutes,
+      minSeparationKm:
+        syntheticEvent.eventClass === "collision"
+          ? 0
+          : syntheticEvent.eventClass === "super_close_call"
+            ? SUPER_CLOSE_CALL_THRESHOLD_KM
+            : CLOSE_APPROACH_THRESHOLD_KM,
+      syntheticEventClass: syntheticEvent.eventClass,
+    });
+  }
+
+  const mergedPairEvents = pairEvents
+    .sort((left, right) => left.minute - right.minute)
+    .reduce((deduped, event) => {
+      const previous = deduped[deduped.length - 1];
+      if (!previous) {
+        deduped.push(event);
+        return deduped;
+      }
+
+      if (Math.abs(previous.minute - event.minute) <= 2) {
+        if (event.syntheticEventClass && !previous.syntheticEventClass) {
+          deduped[deduped.length - 1] = event;
+          return deduped;
+        }
+        if (!previous.syntheticEventClass && event.minSeparationKm < previous.minSeparationKm) {
+          deduped[deduped.length - 1] = event;
+        }
+        return deduped;
+      }
+
+      deduped.push(event);
+      return deduped;
+    }, []);
+
+  return mergedPairEvents
+    .map((pairEvent) => {
+      const eventClass = classifyTimelineEvent(
+        pairEvent.minSeparationKm,
+        pairEvent.syntheticEventClass ?? null
+      );
+      if (!eventClass) return null;
+
+      const timelineMinute = pairEvent.minute;
+      if (!Number.isFinite(timelineMinute)) return null;
+
+      const adjustedMinSeparationKm =
+        eventClass === "collision"
+          ? 0
+          : eventClass === "super_close_call"
+            ? Math.min(pairEvent.minSeparationKm, 8)
+            : Math.min(pairEvent.minSeparationKm, 35);
+      const riskScore = round(
+        eventClass === "collision"
+          ? 100
+          : eventClass === "super_close_call"
+            ? Math.max(
+                buildPairRiskScore({
+                  target,
+                  candidateType: candidate.type,
+                  minSeparationKm: adjustedMinSeparationKm,
+                  sampledTcaMinutes: timelineMinute,
+                  altitudeDeltaKm: candidateEntry.altitudeDeltaKm,
+                }),
+                92
+              )
+            : Math.max(
+                buildPairRiskScore({
+                  target,
+                  candidateType: candidate.type,
+                  minSeparationKm: adjustedMinSeparationKm,
+                  sampledTcaMinutes: timelineMinute,
+                  altitudeDeltaKm: candidateEntry.altitudeDeltaKm,
+                }),
+                76
+              ),
+        1
+      );
+
+      return {
+        targetNoradId: target.details.NORAD_CAT_ID,
+        targetName: target.details.OBJECT_NAME,
+        targetType: target.type,
+        candidateNoradId: candidate.details.NORAD_CAT_ID,
+        candidateName: candidate.details.OBJECT_NAME || "UNKNOWN OBJECT",
+        candidateType: candidate.type,
+        minSeparationKm: round(adjustedMinSeparationKm, 1),
+        sampledTcaMinutes: timelineMinute,
+        eventTimeMinutes: timelineMinute,
+        timelineMinute,
+        riskScore,
+        riskBand: timelineEventBand(eventClass, riskScore),
+        riskColor: timelineEventColor(eventClass, riskScore),
+        eventClass,
+        eventLabel: timelineEventLabel(eventClass),
+        isConfirmedCollision: eventClass === "collision",
+      };
+    })
+    .filter(Boolean)
     .sort((left, right) => left.timelineMinute - right.timelineMinute);
 }

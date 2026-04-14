@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatTPlusMinutes } from "../../utils/orbitalAnalysis";
 
 function alertColor(riskBand) {
@@ -8,8 +8,15 @@ function alertColor(riskBand) {
   return "#00d1ff";
 }
 
+function alertEventLabel(alert) {
+  if (alert?.is_confirmed_collision || alert?.event_class === "collision") return "Collision";
+  if (alert?.event_class === "super_close_call") return "Super close call";
+  if (alert?.event_class === "close_approach") return "Close approach";
+  return "Tracked risk";
+}
+
 function alertAccent(alert) {
-  if (alert?.is_confirmed_collision || alert?.event_class === "collision") {
+  if (alert?.risk_band === "SEVERE") {
     return {
       border: "1px solid rgba(255,95,110,0.3)",
       background: "rgba(38,10,14,0.56)",
@@ -17,7 +24,7 @@ function alertAccent(alert) {
       detail: "rgba(255,180,180,0.58)",
     };
   }
-  if (alert?.event_class === "super_close_call") {
+  if (alert?.risk_band === "HIGH") {
     return {
       border: "1px solid rgba(255,140,66,0.22)",
       background: "rgba(33,18,8,0.5)",
@@ -25,7 +32,7 @@ function alertAccent(alert) {
       detail: "rgba(255,196,150,0.52)",
     };
   }
-  if (alert?.event_class === "close_approach") {
+  if (alert?.risk_band === "ELEVATED") {
     return {
       border: "1px solid rgba(255,209,102,0.18)",
       background: "rgba(32,26,10,0.48)",
@@ -182,6 +189,12 @@ function FiltersView({
       label: "Uncertainty Zones",
       desc: "Density shells for fragment-rich orbital bands",
     },
+    {
+      id: "futurePaths",
+      shortLabel: "FUT",
+      label: "Future Paths",
+      desc: "Predicted orbital trajectory ahead of current position",
+    },
   ];
 
   return (
@@ -294,7 +307,7 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onSelectAlert?.(alert);
+                  onSelectAlert?.(alert, { activate: false });
                 }}
                 style={{
                   width: "100%",
@@ -323,7 +336,7 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                       textTransform: "uppercase",
                     }}
                   >
-                    {alert.event_label || alert.risk_band}
+                    {alert.risk_band || "LOW"}
                   </span>
                   <span style={{ fontSize: "0.54rem", color: "rgba(200,214,229,0.46)" }}>
                     {alert.risk_score}%
@@ -346,6 +359,7 @@ function AlertsView({ alerts, activeAlertKey, previewAlertKey, onSelectAlert }) 
                     textTransform: "uppercase",
                   }}
                 >
+                  <span>{alertEventLabel(alert)}</span>
                   <span>{alert.min_separation_km} km</span>
                   <span>{formatTPlusMinutes(alert.sampled_tca_minutes, true)}</span>
                 </div>
@@ -408,6 +422,13 @@ export default function MissionSidebar({
     }),
     [alerts.length]
   );
+
+  useEffect(() => {
+    if (alerts.length > 0 && activeTab === "filters") {
+      setActiveTab("alerts");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alerts.length]);
 
   return (
     <div

@@ -21,8 +21,8 @@ const solutionCards = [
         body: "Quantifies covariance and propagation uncertainty in orbital state vectors for accurate risk assessment.",
     },
     {
-        title: "Simulation Engine",
-        body: "Forward-propagates scenarios to model debris evolution, cascade risk, and orbital sustainability.",
+        title: "Risk Assessment",
+        body: "Forward-propagates orbital states to model conjunction risks and monitor exospheric sustainability.",
     },
 ];
 
@@ -49,8 +49,8 @@ const featureCards = [
     },
     {
         tone: "cyan",
-        title: "Simulation Engine",
-        body: "Monte Carlo orbital simulation to model debris evolution and cascade scenarios over time.",
+        title: "Risk Engine",
+        body: "High-fidelity orbital propagation to monitor and score conjunction risks across the entire catalog.",
         icon: (
             <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -86,7 +86,7 @@ const impactCards = [
     {
         title: "PREVENT",
         subtitle: "Cascade Events",
-        body: "Simulation-driven foresight to prevent large-scale orbital debris generation.",
+        body: "Data-driven foresight to prevent large-scale orbital debris generation through early warning.",
     },
     {
         title: "DECIDE",
@@ -274,7 +274,7 @@ export default function LandingPage({ videoSrc = "/videos/earthsatellite.mp4" })
 
                             <p className="kx-body" data-reveal>
                                 KesslerX fuses satellite tracking, debris cataloging, and uncertainty modeling into
-                                a single intelligence layer. It screens conjunction risks, simulates future orbital
+                                a single intelligence layer. It screens conjunction risks, propagates orbital
                                 states, and surfaces actionable insights before collisions occur.
                             </p>
 

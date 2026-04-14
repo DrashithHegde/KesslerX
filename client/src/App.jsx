@@ -152,6 +152,58 @@ function alertInteractionKey(alert) {
   return `${alert.target_norad_id}-${alert.candidate_norad_id}`;
 }
 
+function alertBandPriority(band) {
+  const normalizedBand = String(band ?? "").toUpperCase();
+  if (normalizedBand === "SEVERE") return 0;
+  if (normalizedBand === "HIGH") return 1;
+  if (normalizedBand === "ELEVATED") return 2;
+  return 3;
+}
+
+function sortAlertsByPriority(alerts = []) {
+  return [...alerts].sort((left, right) => {
+    const bandDelta = alertBandPriority(left?.risk_band) - alertBandPriority(right?.risk_band);
+    if (bandDelta !== 0) return bandDelta;
+
+    const scoreDelta = Number(right?.risk_score ?? 0) - Number(left?.risk_score ?? 0);
+    if (scoreDelta !== 0) return scoreDelta;
+
+    const separationDelta =
+      Number(left?.min_separation_km ?? Number.POSITIVE_INFINITY) -
+      Number(right?.min_separation_km ?? Number.POSITIVE_INFINITY);
+    if (separationDelta !== 0) return separationDelta;
+
+    return (
+      Number(left?.sampled_tca_minutes ?? Number.POSITIVE_INFINITY) -
+      Number(right?.sampled_tca_minutes ?? Number.POSITIVE_INFINITY)
+    );
+  });
+}
+
+function isImportantAlert(alert) {
+  if (!alert) return false;
+
+  const riskScore = Number(alert?.risk_score);
+  const riskBand = String(alert?.risk_band ?? "").toUpperCase();
+
+  if (alert?.is_confirmed_collision) {
+    return true;
+  }
+  if (Number.isFinite(riskScore) && riskScore >= 75) {
+    return true;
+  }
+
+  return riskBand === "SEVERE";
+}
+
+function formatGlobalAlertMessage(alert) {
+  const eventClass = deriveTimelineEventClass(alert);
+  const label = timelineEventLabel(eventClass, alert?.event_label ?? alert?.risk_band ?? "ALERT");
+  const distanceKm = Number(alert?.min_separation_km);
+  const distanceLabel = Number.isFinite(distanceKm) ? `${distanceKm} KM` : "RANGE UNKNOWN";
+  return `GLOBAL ALERT // ${label} // ${alert?.target_name ?? "TARGET"} VS ${alert?.candidate_name ?? "OBJECT"} // ${distanceLabel}`;
+}
+
 function mergeTimelineEvents(events = []) {
   const merged = new Map();
 
@@ -263,7 +315,7 @@ export default function App() {
   const [comparedNoradId, setComparedNoradId] = useState(null);
   const [activeAlert, setActiveAlert] = useState(null);
   const [previewAlert, setPreviewAlert] = useState(null);
-  const [activeScenario, setActiveScenario] = useState(null);
+
   const [selectionTimelineSeeds, setSelectionTimelineSeeds] = useState([]);
   const [datasetStats, setDatasetStats] = useState(EMPTY_DATASET_STATS);
   const [analysisOverview, setAnalysisOverview] = useState(EMPTY_ANALYSIS_OVERVIEW);
@@ -275,6 +327,7 @@ export default function App() {
   const [simOffsetHours, setSimOffsetHours] = useState(0);
   const [layerVisibility, setLayerVisibility] = useState({
     uncertaintyZones: false,
+    futurePaths: false,
   });
   const previousTargetIdRef = useRef(null);
   const cursorPingIdRef = useRef(0);
@@ -284,6 +337,7 @@ export default function App() {
   const analysisApiToastShownRef = useRef(false);
   const previewAlertKeyRef = useRef(null);
   const activeAlertKeyRef = useRef(null);
+  const globalWarningAlertKeyRef = useRef(null);
   const backendAnalysisRef = useRef({
     noradId: null,
     data: null,
@@ -299,6 +353,10 @@ export default function App() {
   const overviewSimHours = useMemo(
     () => Number((Math.round(simOffsetHours / OVERVIEW_SYNC_STEP_HOURS) * OVERVIEW_SYNC_STEP_HOURS).toFixed(4)),
     [simOffsetHours]
+  );
+  const importantOverviewAlerts = useMemo(
+    () => sortAlertsByPriority(analysisOverview.alerts.filter(isImportantAlert)),
+    [analysisOverview.alerts]
   );
 
 
@@ -396,103 +454,6 @@ export default function App() {
     setSimOffsetHours((current) => (current === nextHours ? current : nextHours));
   }, []);
 
-  const handleSimTriggerCollision = useCallback(async () => {
-    if (simActionPending) return;
-    setSimActionPending(true);
-    const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
-
-    if (datasetStats.source === "scenario" || activeScenario?.kind === "collision") {
-      showToast("SIMULATION EVENT // CLEARING SYNTHETIC RISK FIELD");
-      try {
-        const res = await fetch(`${apiBaseUrl}/scenario/reset`, { method: "POST" });
-        if (res.ok) {
-          setActiveScenario(null);
-          setActiveAlert(null);
-          setPreviewAlert(null);
-          activeAlertKeyRef.current = null;
-          previewAlertKeyRef.current = null;
-          setComparedNoradId(null);
-          setSelectionTimelineSeeds([]);
-          setFocusNoradId(null);
-          setRefreshSignal((s) => s + 1);
-          showToast("SIMULATION EVENT // SYNTHETIC RISK FIELD REMOVED");
-        } else {
-          const result = await res.json().catch(() => ({}));
-          showToast(`SIMULATION EVENT // ${result.detail || "RISK FIELD CLEAR FAILED"}`);
-        }
-      } catch {
-        showToast("SIMULATION EVENT // RISK FIELD CLEAR FAILED");
-      } finally {
-        setSimActionPending(false);
-      }
-      return;
-    }
-
-    showToast("SIMULATION EVENT // INJECTING RISK FIELD");
-    try {
-      const res = await fetch(`${apiBaseUrl}/scenario/trigger-collision`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          anchor_norad_id: selectedTarget?.details?.NORAD_CAT_ID ?? null,
-        }),
-      });
-      if (res.ok) {
-        const result = await res.json().catch(() => ({}));
-        setActiveAlert(null);
-        setPreviewAlert(null);
-        activeAlertKeyRef.current = null;
-        previewAlertKeyRef.current = null;
-        setActiveScenario({
-          kind: "collision",
-          title: "Injected Risk Field",
-          collisionStarted: false,
-          focusNoradId: result.focus_norad_id ?? null,
-          compareNoradId: result.compare_norad_id ?? null,
-          anchorName: result.anchor_name ?? null,
-          compareName: result.threat_name ?? null,
-          pairPreview: result.pair_preview ?? null,
-          events: Array.isArray(result.scenario_events) ? result.scenario_events : [],
-          fragmentIds: Array.isArray(result.fragment_ids) ? result.fragment_ids : [],
-          injectedCount: result.injected_count ?? 0,
-        });
-        setComparedNoradId(null);
-        setFocusNoradId(null);
-        setRefreshSignal(s => s + 1);
-        showToast(
-          result.threat_name && result.anchor_name
-            ? `SIMULATION EVENT // ${result.injected_count ?? 0} SYNTHETIC RISKS INJECTED`
-            : "SIMULATION EVENT // RISK FIELD INJECTED"
-        );
-      } else {
-        const result = await res.json().catch(() => ({}));
-        showToast(`SIMULATION EVENT // ${result.detail || "COLLISION INJECTION FAILED"}`);
-      }
-    } catch {
-      showToast("SIMULATION EVENT // COLLISION INJECTION FAILED");
-    } finally {
-      setSimActionPending(false);
-    }
-  }, [activeScenario?.kind, datasetStats.source, selectedTarget, showToast, simActionPending]);
-
-  const handleStartCollisionSimulation = useCallback(() => {
-    setActiveScenario((current) => {
-      if (!current || current.kind !== "collision" || current.collisionStarted) {
-        return current;
-      }
-      showToast(
-        current.anchorName && current.compareName
-          ? `COLLISION SIM // ${current.anchorName} VS ${current.compareName}`
-          : "COLLISION SIM // IMPACT PLAYBACK ACTIVE"
-      );
-      return {
-        ...current,
-        collisionStarted: true,
-        collisionStartedAt: Date.now(),
-      };
-    });
-  }, [showToast]);
-
   const handleSimReset = useCallback(async () => {
     if (simActionPending) return;
     setSimActionPending(true);
@@ -514,9 +475,8 @@ export default function App() {
 
     try {
       const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
-      const res = await fetch(`${apiBaseUrl}/scenario/reset`, { method: "POST" });
+      const res = await fetch(`${apiBaseUrl}/reset`, { method: "POST" });
       if (res.ok) {
-        setActiveScenario(null);
         setActiveAlert(null);
         setPreviewAlert(null);
         activeAlertKeyRef.current = null;
@@ -667,7 +627,6 @@ export default function App() {
     setPreviewAlert(null);
     activeAlertKeyRef.current = null;
     previewAlertKeyRef.current = null;
-    setActiveScenario(null);
     setSelectionTimelineSeeds([]);
     setFocusMode(false);
     previousTargetIdRef.current = null;
@@ -702,11 +661,26 @@ export default function App() {
     activeAlertKeyRef.current = alertInteractionKey(activeAlert);
   }, [activeAlert]);
 
-  const handleSelectAlert = useCallback((alert) => {
+  const handleSelectAlert = useCallback((alert, options = {}) => {
     const nextAlertKey = alertInteractionKey(alert);
     const previewKey = previewAlertKeyRef.current;
     const activeKey = activeAlertKeyRef.current;
-    const shouldActivateScenario = previewKey === nextAlertKey || activeKey === nextAlertKey;
+    const shouldActivateScenario =
+      options.activate === true || previewKey === nextAlertKey || activeKey === nextAlertKey;
+    const selectedTargetId = String(selectedTarget?.details?.NORAD_CAT_ID ?? "");
+    const selectedCandidateId = String(comparedNoradId ?? "");
+    const nextTargetId = String(alert?.target_norad_id ?? "");
+    const nextCandidateId = String(alert?.candidate_norad_id ?? "");
+    const sameActivePair =
+      activeKey === nextAlertKey &&
+      selectedTargetId === nextTargetId &&
+      selectedCandidateId === nextCandidateId;
+
+    if (sameActivePair) {
+      setPreviewAlert(alert);
+      setActiveAlert(alert);
+      return;
+    }
 
     setSatTypes((prev) => {
       const next = { ...prev };
@@ -753,14 +727,98 @@ export default function App() {
     activeAlertKeyRef.current = null;
     setComparedNoradId(null);
     showToast(`ALERT TARGET // ${alert.target_name}`);
-  }, [selectedTarget, showToast, simOffsetHours]);
+  }, [comparedNoradId, selectedTarget, showToast, simOffsetHours]);
+
+  useEffect(() => {
+    if (simRunning || selectedTarget) {
+      globalWarningAlertKeyRef.current = null;
+      clearWarningToast();
+      return;
+    }
+
+    const topAlert = importantOverviewAlerts[0] ?? null;
+    if (!topAlert) {
+      globalWarningAlertKeyRef.current = null;
+      clearWarningToast();
+      return;
+    }
+
+    const topAlertKey = [
+      alertInteractionKey(topAlert),
+      topAlert.event_class ?? "",
+      topAlert.risk_band ?? "",
+      topAlert.sampled_tca_minutes ?? "",
+    ].join(":");
+
+    if (globalWarningAlertKeyRef.current === topAlertKey) {
+      return;
+    }
+
+    globalWarningAlertKeyRef.current = topAlertKey;
+    showWarningToast(formatGlobalAlertMessage(topAlert));
+  }, [clearWarningToast, importantOverviewAlerts, selectedTarget, showWarningToast, simRunning]);
+
+  const handleJumpToEvent = useCallback((event) => {
+    if (!event) return;
+    const timelineMinute = Number(
+      event?.timeline_minute ?? event?.event_time_minutes ?? event?.sampled_tca_minutes
+    );
+    if (!Number.isFinite(timelineMinute)) return;
+
+    // Pause sim if running
+    setSimRunning(false);
+
+    // Compute progress and seek
+    const progress = Math.min(Math.max(timelineMinute / (SIM_WINDOW_HOURS * 60), 0), 1);
+    simProgressRef.current = progress;
+    const nextSimTimeMs = progressToSimTimeMs(simBaseTimeRef.current, progress);
+    simTimeRef.current = nextSimTimeMs;
+    const nextHours = Number(((nextSimTimeMs - simBaseTimeRef.current) / (60 * 60 * 1000)).toFixed(4));
+    analysisSyncRef.current = { lastWallTimeMs: 0, lastHours: nextHours };
+    setSimOffsetHours(nextHours);
+
+    // Focus on the pair
+    const targetNoradId = event.target_norad_id ?? event.targetNoradId ?? null;
+    const candidateNoradId = event.candidate_norad_id ?? event.candidateNoradId ?? null;
+    if (targetNoradId) {
+      pendingTargetNoradIdRef.current = targetNoradId;
+      setFocusNoradId(targetNoradId);
+      setFocusRequestToken((t) => t + 1);
+    }
+    if (candidateNoradId) {
+      setComparedNoradId(candidateNoradId);
+    }
+    setFocusMode(true);
+
+    // Build alert-compatible object for the active pair
+    setActiveAlert({
+      target_norad_id: targetNoradId,
+      target_name: event.target_name ?? event.targetName ?? "Target",
+      target_type: event.target_type ?? event.targetType ?? null,
+      candidate_norad_id: candidateNoradId,
+      candidate_name: event.candidate_name ?? event.candidateName ?? "Object",
+      candidate_type: event.candidate_type ?? event.candidateType ?? null,
+      min_separation_km: event.min_separation_km ?? event.minSeparationKm ?? null,
+      sampled_tca_minutes: event.sampled_tca_minutes ?? event.sampledTcaMinutes ?? timelineMinute,
+      risk_score: event.risk_score ?? event.riskScore ?? null,
+      risk_band: event.risk_band ?? event.riskBand ?? null,
+      risk_color: event.risk_color ?? event.riskColor ?? null,
+      event_class: event.event_class ?? event.eventClass ?? null,
+      event_label: event.event_label ?? event.eventLabel ?? null,
+      is_confirmed_collision: event.is_confirmed_collision ?? event.isConfirmedCollision ?? false,
+      timeline_minute: timelineMinute,
+    });
+
+    const eventLabel = event.event_label ?? event.eventLabel ?? "EVENT";
+    const totalMinutes = Math.round(timelineMinute);
+    const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+    const minutes = String(totalMinutes % 60).padStart(2, "0");
+    showToast(`EVENT JUMP // ${eventLabel} @ T+${hours}:${minutes}`);
+  }, [showToast]);
 
   useEffect(() => {
     const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
     const controller = new AbortController();
-    if (Date.now() < analysisApiCooldownUntilRef.current) {
-      return () => controller.abort();
-    }
 
     const fetchOverview = async () => {
       try {
@@ -771,24 +829,23 @@ export default function App() {
         if (!res.ok) return;
         const result = await res.json();
         if (controller.signal.aborted) return;
-        analysisApiCooldownUntilRef.current = 0;
-        analysisApiToastShownRef.current = false;
         const overview = result?.data || {};
+        const sortedAlerts = sortAlertsByPriority(Array.isArray(overview.alerts) ? overview.alerts : []);
         setAnalysisOverview({
           zones: Array.isArray(overview.zones) ? overview.zones : [],
-          alerts: Array.isArray(overview.alerts) ? overview.alerts : [],
+          alerts: sortedAlerts,
           simulatedAt: overview.simulated_at || null,
           catalogCount: overview.catalog_count || 0,
         });
-      } catch {
+      } catch (err) {
         if (!controller.signal.aborted) {
-          analysisApiCooldownUntilRef.current = Date.now() + ANALYSIS_API_RETRY_MS;
-          setAnalysisOverview(EMPTY_ANALYSIS_OVERVIEW);
+          console.warn("Failed to fetch global analysis alerts API", err);
         }
       }
     };
 
     fetchOverview();
+
     return () => controller.abort();
   }, [datasetStats.generatedAt, overviewSimHours, refreshSignal]);
 
@@ -924,6 +981,11 @@ export default function App() {
       return [];
     }
 
+    const selectedPairTimelineEvents = Array.isArray(analysisSnapshot?.pairTimelineEvents)
+      ? analysisSnapshot.pairTimelineEvents
+        .map((event) => normalizeTimelineEvent(event))
+        .filter(Boolean)
+      : [];
     const selectedTimelineEvents = Array.isArray(analysisSnapshot?.timelineEvents)
       ? analysisSnapshot.timelineEvents
         .map((event) => normalizeTimelineEvent(event))
@@ -934,14 +996,40 @@ export default function App() {
       ...selectionTimelineSeeds,
     ]);
 
-    if (activeAlert && selectedTarget && mergedSelectedTimelineEvents.length > 0) {
-      const pairEvent = mergedSelectedTimelineEvents.find(
+    if (activeAlert && selectedTarget) {
+      const pairSpecificEvents = selectedPairTimelineEvents.filter(
         (event) =>
           String(event.target_norad_id) === String(activeAlert.target_norad_id) &&
           String(event.candidate_norad_id) === String(activeAlert.candidate_norad_id)
       );
-      if (pairEvent) {
-        return [pairEvent];
+      if (pairSpecificEvents.length > 0) {
+        return pairSpecificEvents;
+      }
+
+      const pairEvents = mergedSelectedTimelineEvents.filter(
+        (event) =>
+          String(event.target_norad_id) === String(activeAlert.target_norad_id) &&
+          String(event.candidate_norad_id) === String(activeAlert.candidate_norad_id)
+      );
+      if (pairEvents.length > 0) {
+        return pairEvents;
+      }
+    }
+
+    if (selectedTarget && comparedNoradId) {
+      if (selectedPairTimelineEvents.length > 0) {
+        return selectedPairTimelineEvents;
+      }
+
+      if (mergedSelectedTimelineEvents.length > 0) {
+      const pairEvents = mergedSelectedTimelineEvents.filter(
+        (event) =>
+          String(event.target_norad_id) === String(selectedTarget.details.NORAD_CAT_ID) &&
+          String(event.candidate_norad_id) === String(comparedNoradId)
+      );
+      if (pairEvents.length > 0) {
+        return pairEvents;
+      }
       }
     }
 
@@ -964,7 +1052,7 @@ export default function App() {
     }
 
     return [];
-  }, [activeAlert, activePair, analysisSnapshot, selectedTarget, selectionTimelineSeeds]);
+  }, [activeAlert, activePair, analysisSnapshot, comparedNoradId, selectedTarget, selectionTimelineSeeds]);
 
   const activePairTimelineEvent = useMemo(() => {
     if (!activePair) return null;
@@ -972,7 +1060,12 @@ export default function App() {
     const matchedEvent = activeTimelineEvents.find(
       (event) =>
         String(event?.target_norad_id ?? "") === String(activePair.target_norad_id ?? "") &&
-        String(event?.candidate_norad_id ?? "") === String(activePair.candidate_norad_id ?? "")
+        String(event?.candidate_norad_id ?? "") === String(activePair.candidate_norad_id ?? "") &&
+        (
+          activePair.timeline_minute === undefined ||
+          activePair.timeline_minute === null ||
+          Number(event?.timeline_minute ?? Number.NaN).toFixed(3) === Number(activePair.timeline_minute).toFixed(3)
+        )
     );
     if (matchedEvent) {
       return matchedEvent;
@@ -1012,6 +1105,13 @@ export default function App() {
     const targetNoradId = selectedTarget?.details?.NORAD_CAT_ID ?? null;
     if (!targetNoradId) return null;
 
+    if (comparedNoradId) {
+      return {
+        targetNoradId,
+        candidateNoradId: comparedNoradId,
+      };
+    }
+
     if (
       activeAlert?.target_norad_id &&
       String(activeAlert.target_norad_id) === String(targetNoradId)
@@ -1026,7 +1126,7 @@ export default function App() {
       targetNoradId,
       candidateNoradId: null,
     };
-  }, [activeAlert, selectedTarget]);
+  }, [activeAlert, comparedNoradId, selectedTarget]);
 
   const focusModeObjectIds = useMemo(() => {
     const ids = [];
@@ -1075,7 +1175,7 @@ export default function App() {
   const activeSatTypes = SAT_TYPE_CONFIG
     .map((config) => config.id)
     .filter((type) => satTypes[type]);
-  const riskInjected = datasetStats.source === "scenario" || activeScenario?.kind === "collision";
+
   const simDisplayTimestamp = useMemo(
     () => new Date(simBaseTimeRef.current + simOffsetHours * 3600 * 1000).toISOString(),
     [simOffsetHours]
@@ -1113,9 +1213,9 @@ export default function App() {
         focusMode={focusMode}
         focusObjectIds={focusModeObjectIds}
         activePair={activePair}
-        scenarioState={activeScenario}
         uncertaintyZones={layerVisibility.uncertaintyZones ? analysisOverview.zones : []}
         showOrbitalPaths
+        showFuturePaths={layerVisibility.futurePaths}
       />
 
       <div
@@ -1132,7 +1232,7 @@ export default function App() {
         selectedTarget={selectedTarget}
         analysisSnapshot={analysisSnapshot}
         activePair={activePair}
-        activeScenario={activeScenario}
+
         simOffsetHours={simOffsetHours}
       />
 
@@ -1143,7 +1243,7 @@ export default function App() {
         datasetStats={datasetStats}
         layerVisibility={layerVisibility}
         onToggleLayer={handleLayerToggle}
-        alerts={analysisOverview.alerts}
+        alerts={importantOverviewAlerts}
         activeAlertKey={
           activeAlert
             ? `${activeAlert.target_norad_id}-${activeAlert.candidate_norad_id}`
@@ -1190,8 +1290,6 @@ export default function App() {
         onSimPause={handleSimPause}
         onSimComplete={handleSimComplete}
         onSimSpeedChange={handleSimSpeedChange}
-        onSimTriggerCollision={handleSimTriggerCollision}
-        onStartCollisionSimulation={handleStartCollisionSimulation}
         onSimReset={handleSimReset}
         simActionPending={simActionPending}
         simProgressRef={simProgressRef}
@@ -1199,15 +1297,23 @@ export default function App() {
         focusMode={focusMode}
         focusModeAvailable={focusModeAvailable}
         onToggleFocusMode={handleToggleFocusMode}
-        activeScenario={activeScenario}
-        timelineEvents={activeTimelineEvents}
-        riskInjected={riskInjected}
+
+        timelineEvents={
+          activePair?.candidate_norad_id
+            ? activeTimelineEvents.filter(
+                (event) =>
+                  String(event.target_norad_id) === String(activePair.target_norad_id) &&
+                  String(event.candidate_norad_id) === String(activePair.candidate_norad_id)
+              )
+            : []
+        }
+
+        onJumpToEvent={handleJumpToEvent}
       />
 
       <button
         type="button"
         onClick={handleReturnToLanding}
-        disabled={simActionPending}
         style={{
           position: "fixed",
           left: "max(20px, calc((100vw - 760px) / 4 - 90px))",
@@ -1225,8 +1331,8 @@ export default function App() {
           letterSpacing: "0.18em",
           textAlign: "center",
           textTransform: "uppercase",
-          cursor: simActionPending ? "not-allowed" : "pointer",
-          opacity: simActionPending ? 0.6 : 1,
+          cursor: "pointer",
+          opacity: 1,
         }}
       >
         {simActionPending ? "Exiting" : "Stand Down"}
@@ -1245,7 +1351,7 @@ export default function App() {
           datasetStats={datasetStats}
           activePair={activePair}
           activePairTimelineEvent={activePairTimelineEvent}
-          activeScenario={activeScenario}
+
         />
       </Suspense>
 
@@ -1253,7 +1359,7 @@ export default function App() {
         recTime={recTime}
         datasetStats={datasetStats}
         selectedTarget={selectedTarget}
-        alertCount={analysisOverview.alerts.length}
+        alertCount={importantOverviewAlerts.length}
       />
 
       <CursorReticle ping={cursorPing} />

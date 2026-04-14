@@ -4,7 +4,6 @@ export default function TopBar({
   selectedTarget,
   analysisSnapshot,
   activePair,
-  activeScenario,
   simOffsetHours = 0,
 }) {
   const selectedLabel = selectedTarget?.details?.OBJECT_NAME || "NO TARGET LOCK";
