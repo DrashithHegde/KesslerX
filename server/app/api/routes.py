@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import get_settings
 from app.core.redis import get_redis
+from app.ml.debris_model import debris_model
 
 router = APIRouter()
 settings = get_settings()
@@ -24,9 +25,11 @@ SPACETRACK_QUERY_URL = (
 
 REDIS_CACHE_KEY = "kesslerx:satellites"
 CACHE_SOURCE_KEY = f"{REDIS_CACHE_KEY}:source"
+REDIS_OVERVIEW_CACHE_PREFIX = "kesslerx:analysis_overview"
 CACHE_EXPIRY_SECONDS = 3600
 LOCAL_CACHE_PATH = Path(__file__).resolve().parents[2] / "tle_cache.json"
 LOCAL_CACHE_META_PATH = Path(__file__).resolve().parents[2] / "tle_cache_meta.json"
+LOCAL_OVERVIEW_CACHE_PATH = Path(__file__).resolve().parents[2] / "analysis_overview_cache.json"
 LOCAL_BASELINE_CACHE_PATH = Path(__file__).resolve().parents[2] / "tle_cache_baseline.json"
 LOCAL_BASELINE_META_PATH = Path(__file__).resolve().parents[2] / "tle_cache_baseline_meta.json"
 
@@ -108,7 +111,7 @@ def save_cache(data: list[dict], source: str) -> None:
             json.dumps({"timestamp": int(time.time()), "source": source}),
             encoding="utf-8",
         )
-        if source != "scenario":
+        if source != "baseline":
             LOCAL_BASELINE_CACHE_PATH.write_text(json.dumps(data), encoding="utf-8")
             LOCAL_BASELINE_META_PATH.write_text(
                 json.dumps({"timestamp": int(time.time()), "source": source}),
@@ -249,3 +252,42 @@ async def get_satellites() -> dict:
         cache_age_seconds=0,
         source=source,
     )
+
+@router.post("/reset")
+async def reset_catalog():
+    """
+    Clears the current session cache and restores the system to the
+    last-saved baseline Space-Track dataset.
+    """
+    try:
+        if redis_client:
+            redis_client.delete(REDIS_CACHE_KEY)
+            redis_client.delete(f"{REDIS_CACHE_KEY}:timestamp")
+            redis_client.delete(CACHE_SOURCE_KEY)
+            for key in redis_client.scan_iter(f"{REDIS_OVERVIEW_CACHE_PREFIX}:*"):
+                redis_client.delete(key)
+
+        if LOCAL_BASELINE_CACHE_PATH.exists():
+            baseline_data = json.loads(LOCAL_BASELINE_CACHE_PATH.read_text(encoding="utf-8"))
+            source = "baseline"
+            if LOCAL_BASELINE_META_PATH.exists():
+                try:
+                    meta = json.loads(LOCAL_BASELINE_META_PATH.read_text(encoding="utf-8"))
+                    source = meta.get("source") or "baseline"
+                except Exception:
+                    source = "baseline"
+            save_cache(baseline_data, source)
+        else:
+            if LOCAL_CACHE_PATH.exists():
+                LOCAL_CACHE_PATH.unlink()
+            if LOCAL_CACHE_META_PATH.exists():
+                LOCAL_CACHE_META_PATH.unlink()
+
+        if LOCAL_OVERVIEW_CACHE_PATH.exists():
+            LOCAL_OVERVIEW_CACHE_PATH.unlink()
+
+        debris_model._is_fitted = False
+        return {"status": "success", "message": "System re-baselined to catalog epoch."}
+    except Exception as e:
+        logger.error("Catalog reset failed: %s", e)
+        raise HTTPException(status_code=500, detail="Internal reset error.")
