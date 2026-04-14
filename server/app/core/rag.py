@@ -1,5 +1,6 @@
 import logging
 import time
+import re
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -9,6 +10,13 @@ from app.core.config import get_settings
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+# List of Gemini models to try in order of preference
+GEMINI_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash", 
+    "gemini-1.5-pro",
+]
 
 # System prompt for the AI Operational Brief panel.
 KESSLER_SYSTEM_PROMPT = """You are KesslerX, an orbital risk-assessment AI used by mission operators.
@@ -49,18 +57,41 @@ class RAGEngine:
         self._explain_cache: dict[str, tuple[float, str]] = {}
 
         self.enabled = bool(settings.gemini_api_key)
-        if self.enabled:
+        self.llm = None
+        self.model_used = None
+        
+        if not self.enabled:
+            logger.warning("Gemini API key not configured. RAG will return fallback explanations.")
+            return
+            
+        # Try to initialize with available models
+        for model in GEMINI_MODELS:
             try:
+                logger.info(f"Attempting to initialize ChatGoogleGenerativeAI with model: {model}")
                 self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-3-flash-preview",
+                    model=model,
                     api_key=settings.gemini_api_key,
-                    temperature=0.2
+                    temperature=0.2,
+                    timeout=12,
+                    max_retries=1,
                 )
+                self.model_used = model
+                logger.info(f"Successfully initialized Gemini LLM with model: {model}")
+                self.enabled = True
+                return
             except Exception as e:
-                logger.error("Failed to initialize LangChain LLM: %s", e)
-                self.enabled = False
-        else:
-            self.llm = None
+                logger.warning(
+                    f"Failed to initialize Gemini LLM with model {model}: {type(e).__name__}: {str(e)}"
+                )
+                continue
+        
+        # If all models failed, disable RAG
+        logger.error(
+            "Failed to initialize Gemini LLM with any available model. "
+            "Please verify GEMINI_API_KEY is valid and models are accessible."
+        )
+        self.enabled = False
+        self.llm = None
 
     def _cache_key(self, analysis_context: Dict[str, Any]) -> str:
         """Build a stable cache key from fields that influence prompt output."""
@@ -121,17 +152,22 @@ class RAGEngine:
         and turns them into a human-readable threat assessment.
         """
         if not self.enabled or not self.llm:
+            logger.warning("RAG engine not enabled or LLM not initialized")
             return "LLM Explanation Engine offline. Please check API configuration."
 
         cache_key = self._cache_key(analysis_context)
         cached = self._get_cached(cache_key)
         if cached is not None:
+            logger.debug(f"Returning cached explanation for norad_id: {analysis_context.get('norad_id')}")
             return cached
             
         try:
+            target_norad = analysis_context.get('norad_id', 'N/A')
+            logger.info(f"Generating RAG explanation for target {target_norad} using model: {self.model_used}")
+            
             prompt = (
                 "Generate the AI Operational Brief from the telemetry below.\n\n"
-                f"Target: {analysis_context.get('object_name', 'Unknown')} (ID: {analysis_context.get('norad_id', 'N/A')})\n"
+                f"Target: {analysis_context.get('object_name', 'Unknown')} (ID: {target_norad})\n"
                 f"Displayed Uncertainty Score: {analysis_context.get('uncertainty_score', 'insufficient telemetry')}%\n"
                 f"Risk Score: {analysis_context.get('risk_score', 'insufficient telemetry')}%\n"
                 f"Risk Band: {analysis_context.get('risk_band', 'insufficient telemetry')}\n"
@@ -160,13 +196,17 @@ class RAGEngine:
                 HumanMessage(content=prompt)
             ]
             
+            logger.debug(f"Invoking LLM for target {target_norad}")
             response = await self.llm.ainvoke(messages)
             raw_content = response.content if hasattr(response, "content") else ""
+            
+            logger.debug(f"Raw LLM response type: {type(raw_content)}, content: {str(raw_content)[:200]}")
 
             # Gemini may return content as a list of content parts
             # (e.g. [{'type': 'text', 'text': '...', 'extras': {...}}])
             # rather than a plain string. Extract just the text.
             if isinstance(raw_content, list):
+                logger.debug("Response is a list, extracting text parts")
                 text_parts = []
                 for part in raw_content:
                     if isinstance(part, dict) and "text" in part:
@@ -177,16 +217,48 @@ class RAGEngine:
             else:
                 content = str(raw_content or "")
 
+            logger.info(f"Successfully generated explanation for target {target_norad}")
             result = self._coerce_plain_operational_brief(content.strip(), analysis_context)
             self._set_cached(cache_key, result, self.cache_ttl_seconds)
             return result
             
         except Exception as e:
-            logger.error("LLM Generation failed: %s", e)
-            if "insufficient_quota" in str(e) or "invalid_api_key" in str(e) or "401" in str(e) or "429" in str(e):
-                offline_msg = "LLM Explanation Engine offline. Please check API configuration."
+            error_type = type(e).__name__
+            error_msg = str(e)
+            logger.error(
+                f"LLM Generation failed for target {analysis_context.get('norad_id')}: "
+                f"{error_type}: {error_msg}", 
+                exc_info=True
+            )
+            
+            # Check for specific error types that need different handling
+            if any(keyword in error_msg.lower() for keyword in ["quota", "rate", "429", "503"]):
+                logger.warning("API quota or rate limit issue detected")
+                retry_seconds = None
+                # Best-effort extraction from common Gemini/RetryInfo messages.
+                # Examples: "Please retry in 42.07s." or "retryDelay': '42s'"
+                match = re.search(r"retry in\s+(\d+(?:\.\d+)?)s", error_msg, flags=re.IGNORECASE)
+                if not match:
+                    match = re.search(r"retryDelay'\s*:\s*'(\d+)s'", error_msg)
+                if match:
+                    try:
+                        retry_seconds = int(float(match.group(1)))
+                    except Exception:
+                        retry_seconds = None
+
+                offline_msg = "LLM Explanation Engine rate limited (quota exceeded). Please retry shortly."
+                if retry_seconds is not None and retry_seconds > 0:
+                    offline_msg = f"{offline_msg} Retry after ~{retry_seconds}s."
                 self._set_cached(cache_key, offline_msg, self.error_cache_ttl_seconds)
                 return offline_msg
+            elif any(keyword in error_msg.lower() for keyword in ["invalid_api_key", "401", "unauthenticated"]):
+                logger.error("API key authentication failed")
+                offline_msg = "LLM Explanation Engine offline. Invalid or expired API key."
+                self._set_cached(cache_key, offline_msg, self.error_cache_ttl_seconds)
+                return offline_msg
+            
+            # For other errors, return fallback brief
+            logger.info(f"Generating fallback explanation for target {analysis_context.get('norad_id')}")
             fallback_msg = self._coerce_plain_operational_brief("", analysis_context)
             self._set_cached(cache_key, fallback_msg, self.error_cache_ttl_seconds)
             return fallback_msg

@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -27,8 +28,8 @@ ALERT_TARGET_LIMIT = 320
 ALERT_TARGET_ALTITUDE_BAND_KM = 180.0
 PER_TARGET_ALERT_LIMIT = 2
 GLOBAL_ALERT_LIMIT = 16
-MIN_PRIMARY_ALERT_RISK_SCORE = 38.0
-MIN_FALLBACK_ALERT_RISK_SCORE = 22.0
+MIN_PRIMARY_ALERT_RISK_SCORE = 75.0
+MIN_FALLBACK_ALERT_RISK_SCORE = 75.0
 UNCERTAINTY_GRID_LAT_STEP_DEG = 12.0
 UNCERTAINTY_GRID_LON_STEP_DEG = 12.0
 UNCERTAINTY_CELL_LIMIT = 24
@@ -40,7 +41,15 @@ ZONE_MIN_ALTITUDE_HALF_SPAN_KM = 90.0
 ZONE_MAX_ALTITUDE_HALF_SPAN_KM = 320.0
 ZONE_SEGMENT_CHECK_STEPS = 5
 REDIS_CACHE_KEY = "kesslerx:satellites"
+REDIS_OVERVIEW_CACHE_PREFIX = "kesslerx:analysis_overview"
 LOCAL_CACHE_PATH = Path(__file__).resolve().parents[2] / "tle_cache.json"
+LOCAL_CACHE_META_PATH = Path(__file__).resolve().parents[2] / "tle_cache_meta.json"
+LOCAL_OVERVIEW_CACHE_PATH = Path(__file__).resolve().parents[2] / "analysis_overview_cache.json"
+OVERVIEW_CACHE_TTL_SECONDS = 20
+PERSISTED_OVERVIEW_CACHE_TTL_SECONDS = 12 * 60 * 60
+MAX_PERSISTED_OVERVIEW_CACHE_ENTRIES = 96
+_analysis_overview_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_catalog_records_cache: dict[str, list[dict[str, Any]]] = {}
 
 
 def _safe_float(value: Any) -> float | None:
@@ -104,7 +113,6 @@ def load_cached_catalog() -> list[dict[str, Any]]:
                 except json.JSONDecodeError:
                     pass
         except Exception:
-            # Redis is optional; continue with local cache fallback.
             pass
 
     try:
@@ -112,6 +120,112 @@ def load_cached_catalog() -> list[dict[str, Any]]:
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+def _overview_cache_marker() -> str:
+    redis_client = get_redis() if settings.use_redis_cache else None
+    if redis_client:
+        try:
+            ts = redis_client.get(f"{REDIS_CACHE_KEY}:timestamp")
+            source = redis_client.get(f"{REDIS_CACHE_KEY}:source") or "redis"
+            if ts:
+                return f"{source}:{ts}"
+        except Exception:
+            pass
+
+    try:
+        if LOCAL_CACHE_META_PATH.exists():
+            meta = json.loads(LOCAL_CACHE_META_PATH.read_text(encoding="utf-8"))
+            ts = meta.get("timestamp")
+            source = meta.get("source") or "local"
+            if ts:
+                return f"{source}:{ts}"
+    except Exception:
+        pass
+
+    return "uncached"
+
+
+def _load_local_overview_cache_blob() -> dict[str, Any]:
+    try:
+        if LOCAL_OVERVIEW_CACHE_PATH.exists():
+            payload = json.loads(LOCAL_OVERVIEW_CACHE_PATH.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+    except Exception:
+        logger.exception("Failed to read local overview cache")
+    return {}
+
+
+def _store_local_overview_cache_blob(payload: dict[str, Any]) -> None:
+    try:
+        LOCAL_OVERVIEW_CACHE_PATH.write_text(json.dumps(payload), encoding="utf-8")
+    except Exception:
+        logger.exception("Failed to write local overview cache")
+
+
+def _prune_local_overview_cache_blob(
+    payload: dict[str, Any],
+    active_marker: str,
+    max_entries: int = MAX_PERSISTED_OVERVIEW_CACHE_ENTRIES,
+) -> dict[str, Any]:
+    scoped_entries = {
+        key: value
+        for key, value in payload.items()
+        if isinstance(key, str) and key.startswith(f"{active_marker}|")
+    }
+    if len(scoped_entries) <= max_entries:
+        return scoped_entries
+
+    def _sort_key(item: tuple[str, Any]) -> tuple[float, str]:
+        _, value = item
+        if isinstance(value, dict):
+            return (float(value.get("saved_at") or 0.0), item[0])
+        return (0.0, item[0])
+
+    trimmed_items = sorted(scoped_entries.items(), key=_sort_key, reverse=True)[:max_entries]
+    return dict(trimmed_items)
+
+
+def _load_persisted_overview_cache(cache_key: str) -> dict[str, Any] | None:
+    redis_client = get_redis() if settings.use_redis_cache else None
+    if redis_client:
+        try:
+            payload = redis_client.get(f"{REDIS_OVERVIEW_CACHE_PREFIX}:{cache_key}")
+            if payload:
+                cached = json.loads(payload)
+                if isinstance(cached, dict) and isinstance(cached.get("data"), dict):
+                    return cached["data"]
+        except Exception:
+            logger.exception("Failed to read overview snapshot from Redis")
+
+    local_cache = _load_local_overview_cache_blob()
+    cached = local_cache.get(cache_key)
+    if isinstance(cached, dict) and isinstance(cached.get("data"), dict):
+        return cached["data"]
+    return None
+
+
+def _store_persisted_overview_cache(cache_key: str, cache_marker: str, result: dict[str, Any]) -> None:
+    payload = {
+        "saved_at": time.time(),
+        "marker": cache_marker,
+        "data": result,
+    }
+    redis_client = get_redis() if settings.use_redis_cache else None
+    if redis_client:
+        try:
+            redis_client.setex(
+                f"{REDIS_OVERVIEW_CACHE_PREFIX}:{cache_key}",
+                PERSISTED_OVERVIEW_CACHE_TTL_SECONDS,
+                json.dumps(payload),
+            )
+        except Exception:
+            logger.exception("Failed to write overview snapshot to Redis")
+
+    local_cache = _load_local_overview_cache_blob()
+    local_cache[cache_key] = payload
+    pruned_cache = _prune_local_overview_cache_blob(local_cache, cache_marker)
+    _store_local_overview_cache_blob(pruned_cache)
 
 
 def build_catalog_records(raw_catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -144,12 +258,6 @@ def build_catalog_records(raw_catalog: list[dict[str, Any]]) -> list[dict[str, A
                 "inclination": inclination,
                 "altitude_km": altitude_km,
                 "regime": orbital_regime(altitude_km),
-                "is_synthetic": bool(item.get("is_synthetic")),
-                "synthetic_event_class": item.get("synthetic_event_class"),
-                "synthetic_anchor_norad_id": str(item.get("synthetic_anchor_norad_id") or "").strip() or None,
-                "synthetic_event_time_minutes": int(item.get("synthetic_event_time_minutes"))
-                if str(item.get("synthetic_event_time_minutes") or "").strip().isdigit()
-                else None,
                 "satrec": satrec,
             }
         )
@@ -372,7 +480,6 @@ def build_uncertainty_zones(records: list[dict[str, Any]], when: datetime) -> li
                 "lon_index": lon_index,
                 "total_objects": 0,
                 "debris": 0,
-                "synthetic_objects": 0,
                 "altitude_sum": 0.0,
                 "altitude_sum_sq": 0.0,
                 "altitude_samples": 0,
@@ -382,8 +489,7 @@ def build_uncertainty_zones(records: list[dict[str, Any]], when: datetime) -> li
         cell["total_objects"] += 1
         if record["object_type"] == "DEBRIS":
             cell["debris"] += 1
-        if record["is_synthetic"]:
-            cell["synthetic_objects"] += 1
+
         if state.get("altitude_km") is not None:
             altitude = state["altitude_km"]
             cell["altitude_sum"] += altitude
@@ -483,7 +589,6 @@ def build_uncertainty_zones(records: list[dict[str, Any]], when: datetime) -> li
                 "cell_size_deg": UNCERTAINTY_GRID_LAT_STEP_DEG,
                 "total_objects": total,
                 "debris": cell["debris"],
-                "synthetic_objects": cell["synthetic_objects"],
                 "debris_ratio": round(debris_ratio * 100.0, 1),
                 "avg_altitude_km": round(cell["avg_altitude"], 1) if cell["avg_altitude"] is not None else None,
                 "altitude_variance": round(cell["altitude_variance"], 2),
@@ -511,7 +616,7 @@ def _candidate_score(target: dict[str, Any], candidate: dict[str, Any]) -> float
     return altitude_delta * 1.1 + inclination_delta * 0.45
 
 
-def _alert_target_priority(record: dict[str, Any]) -> tuple[int, int, float]:
+def _alert_target_priority(record: dict[str, Any]) -> tuple[int, float]:
     object_type = record.get("object_type")
     if object_type == "PAYLOAD":
         type_priority = 0
@@ -522,9 +627,8 @@ def _alert_target_priority(record: dict[str, Any]) -> tuple[int, int, float]:
     else:
         type_priority = 3
 
-    synthetic_priority = 0 if record.get("synthetic_anchor_norad_id") else 1
     altitude = record.get("altitude_km") or 0.0
-    return (type_priority, synthetic_priority, altitude)
+    return (type_priority, altitude)
 
 
 def _risk_band(score: float) -> str:
@@ -583,14 +687,39 @@ def _risk_color(score: float) -> str:
     return "#00d1ff"
 
 
+def _band_priority(band: str | None) -> int:
+    normalized = (band or "").upper()
+    if normalized == "SEVERE":
+        return 0
+    if normalized == "HIGH":
+        return 1
+    if normalized == "ELEVATED":
+        return 2
+    return 3
+
+
+def _alert_sort_key(alert: dict[str, Any]) -> tuple[int, float, float, float]:
+    min_separation = _safe_float(alert.get("min_separation_km"))
+    sampled_tca = _safe_float(alert.get("sampled_tca_minutes"))
+    risk_score = _safe_float(alert.get("risk_score")) or 0.0
+    return (
+        _band_priority(alert.get("risk_band")),
+        -risk_score,
+        min_separation if min_separation is not None else float("inf"),
+        sampled_tca if sampled_tca is not None else float("inf"),
+    )
+
+
 def _event_style(event_class: str | None, risk_score: float) -> tuple[str, str, str]:
+    risk_band = _risk_band(risk_score)
+    risk_color = _risk_color(risk_score)
     if event_class == "collision":
         return "COLLISION", "#ff4d5a", "SEVERE"
     if event_class == "super_close_call":
-        return "SUPER CLOSE CALL", "#ff8c42", "HIGH"
+        return "SUPER CLOSE CALL", risk_color, risk_band
     if event_class == "close_approach":
-        return "CLOSE APPROACH", "#ffd166", "ELEVATED"
-    return "RISK", _risk_color(risk_score), _risk_band(risk_score)
+        return "CLOSE APPROACH", risk_color, risk_band
+    return "RISK", risk_color, risk_band
 
 
 def _classify_alert_event(min_separation_km: float | None) -> str | None:
@@ -601,19 +730,6 @@ def _classify_alert_event(min_separation_km: float | None) -> str | None:
     if min_separation_km <= 80.0:
         return "close_approach"
     return None
-
-
-def _synthetic_event_profile_for_pair(
-    target: dict[str, Any],
-    candidate: dict[str, Any],
-) -> tuple[str | None, int | None]:
-    for left, right in ((target, candidate), (candidate, target)):
-        anchor_id = left.get("synthetic_anchor_norad_id")
-        event_class = left.get("synthetic_event_class")
-        event_time_minutes = left.get("synthetic_event_time_minutes")
-        if anchor_id and event_class and anchor_id == right["norad_id"]:
-            return event_class, event_time_minutes
-    return None, None
 
 
 def _density_band(total: int) -> str:
@@ -644,11 +760,11 @@ def _build_mitigations(
     tca_minutes = closest_approach["sampledTcaMinutes"]
 
     if min_sep <= 50:
-        actions.append("Immediate maneuver planning recommended: prepare an along-track or radial offset before the predicted closest approach.")
+        actions.append("Immediate maneuver planning recommended: prepare an along-track or radial offset.")
     elif min_sep <= 150:
-        actions.append("Open a collision review window now and evaluate a small pre-planned avoidance burn before TCA.")
+        actions.append("Open a collision review window now and evaluate a pre-planned avoidance burn.")
     else:
-        actions.append("Keep the conjunction under active review; current miss distance is not critical but still warrants targeted screening.")
+        actions.append("Keep the conjunction under active review; current miss distance is not critical.")
 
     if tca_minutes <= 30:
         actions.append("Escalate operational urgency because the time-to-closest-approach is short.")
@@ -656,15 +772,15 @@ def _build_mitigations(
         actions.append("Increase propagation cadence until the encounter window has passed.")
 
     if uncertainty_score >= 70:
-        actions.append("Treat the surrounding shell as debris-rich and avoid holding station in the same altitude band longer than necessary.")
+        actions.append("Treat the surrounding shell as debris-rich and avoid holding station.")
     elif uncertainty_score >= 45:
-        actions.append("Prefer conservative planning because environmental uncertainty is elevated even if the tracked miss distance is moderate.")
+        actions.append("Prefer conservative planning because environmental uncertainty is elevated.")
 
     if closest_approach.get("zoneCrossingDetected"):
-        actions.append("Adjust along-track timing to avoid high-uncertainty corridor crossings near the predicted encounter window.")
+        actions.append("Adjust along-track timing to avoid high-uncertainty corridor crossings.")
 
     if target["object_type"] == "PAYLOAD":
-        actions.append("Preserve payload mission value by keeping maneuver authority, contact windows, and fuel margins available.")
+        actions.append("Preserve payload mission value by keeping maneuver authority available.")
 
     return actions[:4]
 
@@ -768,27 +884,9 @@ def _screen_pair(
         ),
         1,
     )
-    event_class, event_time_minutes = _synthetic_event_profile_for_pair(target, candidate)
+
+    event_class = _classify_alert_event(min_separation)
     event_label, event_color, forced_band = _event_style(event_class, risk_score)
-    if event_class == "collision":
-        sampled_tca = event_time_minutes if event_time_minutes is not None else min(sampled_tca or 0, 15)
-        min_separation = 0.0
-        current_separation = min(current_separation, 12.0)
-        risk_score = 100.0
-    elif event_class == "super_close_call":
-        sampled_tca = event_time_minutes if event_time_minutes is not None else sampled_tca
-        min_separation = min(min_separation, 8.0)
-        risk_score = max(risk_score, 92.0)
-    elif event_class == "close_approach":
-        sampled_tca = event_time_minutes if event_time_minutes is not None else sampled_tca
-        min_separation = min(min_separation, 35.0)
-        risk_score = max(risk_score, 76.0)
-    elif risk_score >= 100.0:
-        risk_score = 99.0
-    if event_class is None:
-        event_class = _classify_alert_event(min_separation)
-        event_label, event_color, forced_band = _event_style(event_class, risk_score)
-    risk_score = round(risk_score, 1)
 
     return {
         "target_norad_id": target["norad_id"],
@@ -809,7 +907,6 @@ def _screen_pair(
         "risk_color": event_color,
         "event_class": event_class,
         "event_label": event_label,
-        "event_time_minutes": event_time_minutes,
         "is_confirmed_collision": event_class == "collision",
     }
 
@@ -819,24 +916,11 @@ def build_global_risk_alerts(
     when: datetime,
     uncertainty_zone_regions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    targeted_anchor_ids = {
-        record["synthetic_anchor_norad_id"]
-        for record in records
-        if record.get("is_synthetic") and record.get("synthetic_anchor_norad_id")
-    }
     target_candidates = [
         record
         for record in records
         if record["object_type"] in {"PAYLOAD", "ROCKET BODY"}
     ]
-    for record in records:
-        if (
-            not record.get("is_synthetic")
-            and record["norad_id"] in targeted_anchor_ids
-            and not any(existing["norad_id"] == record["norad_id"] for existing in target_candidates)
-        ):
-            target_candidates.append(record)
-
     target_candidates.sort(key=_alert_target_priority)
     payloads = target_candidates[:ALERT_TARGET_LIMIT]
     alerts: list[dict[str, Any]] = []
@@ -866,7 +950,6 @@ def build_global_risk_alerts(
             if not alert:
                 continue
 
-            # Relaxed candidate pool used only if strict filtering yields no alerts.
             if (
                 alert["min_separation_km"] <= FALLBACK_ALERT_MIN_SEPARATION_KM
                 and alert["risk_score"] >= MIN_FALLBACK_ALERT_RISK_SCORE
@@ -879,47 +962,19 @@ def build_global_risk_alerts(
             ):
                 target_alerts.append(alert)
 
-        target_alerts.sort(
-            key=lambda alert: (
-                1 if alert.get("is_confirmed_collision") else 0,
-                alert["risk_score"],
-                -alert["min_separation_km"],
-            ),
-            reverse=True,
-        )
-        target_fallback_alerts.sort(
-            key=lambda alert: (
-                1 if alert.get("is_confirmed_collision") else 0,
-                alert["risk_score"],
-                -alert["min_separation_km"],
-            ),
-            reverse=True,
-        )
+        target_alerts.sort(key=_alert_sort_key)
+        target_fallback_alerts.sort(key=_alert_sort_key)
 
         if target_alerts:
             alerts.extend(target_alerts[:PER_TARGET_ALERT_LIMIT])
         elif target_fallback_alerts:
             fallback_alerts.extend(target_fallback_alerts[:PER_TARGET_ALERT_LIMIT])
 
-    alerts.sort(
-        key=lambda alert: (
-            1 if alert.get("is_confirmed_collision") else 0,
-            alert["risk_score"],
-            -alert["min_separation_km"],
-        ),
-        reverse=True,
-    )
+    alerts.sort(key=_alert_sort_key)
     if alerts:
         return alerts[:GLOBAL_ALERT_LIMIT]
 
-    fallback_alerts.sort(
-        key=lambda alert: (
-            1 if alert.get("is_confirmed_collision") else 0,
-            alert["risk_score"],
-            -alert["min_separation_km"],
-        ),
-        reverse=True,
-    )
+    fallback_alerts.sort(key=_alert_sort_key)
     return fallback_alerts[:GLOBAL_ALERT_LIMIT]
 
 
@@ -991,18 +1046,11 @@ def build_target_analysis(records: list[dict[str, Any]], target_norad_id: str, w
                 "pairRiskColor": alert["risk_color"],
                 "eventClass": alert.get("event_class"),
                 "eventLabel": alert.get("event_label"),
-                "eventTimeMinutes": alert.get("event_time_minutes"),
                 "isConfirmedCollision": alert.get("is_confirmed_collision", False),
             }
         )
 
-    screened_objects.sort(
-        key=lambda item: (
-            item["pairRiskScore"],
-            -item["minSeparationKm"],
-        ),
-        reverse=True,
-    )
+    screened_objects.sort(key=lambda item: item["pairRiskScore"], reverse=True)
 
     closest_approach = screened_objects[0] if screened_objects else None
     risk_score = closest_approach["pairRiskScore"] if closest_approach else 0.0
@@ -1038,8 +1086,25 @@ def build_target_analysis(records: list[dict[str, Any]], target_norad_id: str, w
 
 
 def build_analysis_overview(sim_hours: float = 0.0) -> dict[str, Any]:
-    raw_catalog = load_cached_catalog()
-    records = build_catalog_records(raw_catalog)
+    cache_marker = _overview_cache_marker()
+    rounded_sim_hours = round(float(sim_hours or 0.0), 4)
+    cache_key = f"{cache_marker}|{rounded_sim_hours}"
+    cached = _analysis_overview_cache.get(cache_key)
+    if cached and cached[0] > time.time():
+        return cached[1]
+
+    persisted_cached = _load_persisted_overview_cache(cache_key)
+    if persisted_cached:
+        _analysis_overview_cache[cache_key] = (time.time() + OVERVIEW_CACHE_TTL_SECONDS, persisted_cached)
+        return persisted_cached
+
+    records = _catalog_records_cache.get(cache_marker)
+    if records is None:
+        raw_catalog = load_cached_catalog()
+        records = build_catalog_records(raw_catalog)
+        _catalog_records_cache.clear()
+        _catalog_records_cache[cache_marker] = records
+
     simulated_at = utc_now() + timedelta(hours=sim_hours)
 
     zones: list[dict[str, Any]] = []
@@ -1055,9 +1120,21 @@ def build_analysis_overview(sim_hours: float = 0.0) -> dict[str, Any]:
     except Exception:
         logger.exception("Failed to build global risk alerts")
 
-    return {
+    result = {
         "simulated_at": utc_iso(simulated_at),
         "zones": zones,
         "alerts": alerts,
         "catalog_count": len(records),
     }
+
+    if len(_analysis_overview_cache) > 24:
+        expired_keys = [key for key, value in _analysis_overview_cache.items() if value[0] <= time.time()]
+        for key in expired_keys:
+            _analysis_overview_cache.pop(key, None)
+        if len(_analysis_overview_cache) > 24:
+            oldest_key = min(_analysis_overview_cache, key=lambda key: _analysis_overview_cache[key][0])
+            _analysis_overview_cache.pop(oldest_key, None)
+
+    _analysis_overview_cache[cache_key] = (time.time() + OVERVIEW_CACHE_TTL_SECONDS, result)
+    _store_persisted_overview_cache(cache_key, cache_marker, result)
+    return result
